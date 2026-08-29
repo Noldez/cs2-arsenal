@@ -11,10 +11,17 @@ It drives 55 weapons and 2034 finishes, 20 knives, 8 gloves and 94 glove finishe
 collections and 11789 stickers, 1826 pins and 101 music kits, all read from CS2's own schema at
 load time.
 
-<video src="https://github.com/Noldez/cs2-arsenal/raw/main/docs/showcase.mp4" poster="https://github.com/Noldez/cs2-arsenal/raw/main/docs/showcase.png" width="900" controls muted></video>
+<p align="center">
+  <a href="docs/showcase.mp4">
+    <img src="docs/showcase.png" width="900"
+         alt="Knife mode: a Damascus Steel karambit standing in the room, the knife list on the left and the finish list on the right">
+  </a>
+</p>
 
-[Watch the walkthrough](docs/showcase.mp4) - 80 seconds, no commentary: weapons and finishes, knives,
-gloves, the sticker editor, and music kits.
+<p align="center">
+  <a href="docs/showcase.mp4"><b>Watch the walkthrough</b></a> &nbsp;&middot;&nbsp; 80 seconds, no commentary
+  &nbsp;&middot;&nbsp; weapons and finishes, knives, gloves, the sticker editor, music kits
+</p>
 
 ## What it does
 
