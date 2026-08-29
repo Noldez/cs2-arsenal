@@ -151,6 +151,27 @@ def parse_loot_rarity(lines):
     return out
 
 
+# Several paint kits deliberately share ONE description_tag, so they all localise to the same
+# string: every Doppler phase, Ruby, Sapphire and Black Pearl are "Doppler", and every Gamma
+# Doppler phase plus Emerald are "Gamma Doppler". A knife then shows seven identical rows with
+# no way to tell Phase 1 from Ruby. The distinguishing part only exists in the kit's INTERNAL
+# name, so recover it from there.
+VARIANT = re.compile(r'_(?:gamma_)?doppler_phase(\d)|_(ruby|sapphire|emerald|blackpearl)_')
+
+
+def variant_of(paint):
+    """The bit that tells two same-named finishes apart, or None when there is nothing to add."""
+    m = VARIANT.search("_" + paint + "_")
+
+    if not m:
+        return None
+
+    if m.group(1):
+        return f"Phase {m.group(1)}"
+
+    return {"blackpearl": "Black Pearl"}.get(m.group(2), m.group(2).title())
+
+
 def main():
     text = open(ITEMS, encoding="utf-8", errors="replace").read()
     lines = text.split("\n")
@@ -227,6 +248,9 @@ def main():
             grade = RARITY_MAP.get(
                 loot_rarity.get((paint.lower(), wkey))
                 or rarity.get(paint.lower(), "default"), "milspec")
+        if (v := variant_of(paint)) is not None:
+            disp = f"{disp} {v}"
+
         cat[wkey].append({
             "paint": paint,
             "idx": idx,

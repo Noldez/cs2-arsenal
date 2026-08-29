@@ -390,6 +390,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         }
 
         _bridge.HookManager.PlayerCanAcquire.InstallHookPre(OnCanAcquirePre);
+        _bridge.HookManager.PlayerKilledPost.InstallForward(OnPlayerKilledPost);
         _customHud.InstallClickListener(OnClicked);
         _bridge.ModSharp.InstallGameListener(this);
         _bridge.ClientManager.InstallClientListener(this);
@@ -416,6 +417,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_light");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_probe");
         _bridge.HookManager.PlayerCanAcquire.RemoveHookPre(OnCanAcquirePre);
+        _bridge.HookManager.PlayerKilledPost.RemoveForward(OnPlayerKilledPost);
         _customHud.RemoveClickListener(OnClicked);
         _bridge.ModSharp.RemoveGameListener(this);
         _bridge.ClientManager.RemoveClientListener(this);
@@ -426,18 +428,26 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         _layout = null;
 
-        // a map change invalidates every player's preview, not just one
+        // A map change destroys every entity in the world, so holding references to any of them
+        // is holding references to nothing. Clear the LOT, not just the preview: a half reset
+        // leaves the browser believing it is open for someone on a map where it never opened,
+        // and the frame loop then works on a pawn and a camera that no longer exist.
         for (var i = 0; i < MaxSlots; i++)
         {
-            _item[i]    = null;
-            _lamp[i]    = null;
-            _cam[i]     = null;
-            _spawned[i] = "";
-        }
-
-        for (var i = 0; i < MaxSlots; i++)
-        {
-            _open[i] = false;
+            _item[i]           = null;
+            _lamp[i]           = null;
+            _cam[i]            = null;
+            _eye[i]            = null;
+            _spawned[i]        = "";
+            _spawnFailed[i]    = false;
+            _builtOurselves[i] = false;
+            _dressedPawn[i]    = default;
+            _open[i]           = false;
+            _stickerMode[i]    = false;
+            _gloveMode[i]      = false;
+            _glovePending[i]   = false;
+            _respawnPending[i] = false;
+            _hiddenWeapons[i].Clear();
         }
     }
 
@@ -2102,6 +2112,28 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         });
 
         Refresh(slot);
+    }
+
+    /// <summary>
+    ///     Shut the browser if its owner dies while it is open.
+    ///     <br /><br />
+    ///     Browsing players are non solid and frozen, so this is rare, but it is reachable: a
+    ///     round end, world damage, or an admin slay. Everything the browser does hangs off a
+    ///     living pawn, so leaving it open on a corpse means the frame loop keeps re dressing an
+    ///     entity that is gone, and the preview and lamp outlive the player who asked for them.
+    /// </summary>
+    private void OnPlayerKilledPost(IPlayerKilledForwardParams @params)
+    {
+        var slot = @params.Client.Slot;
+        var s    = slot.AsPrimitive();
+
+        if (s >= MaxSlots || !_open[s])
+        {
+            return;
+        }
+
+        _logger.LogInformation("slot {s} died with the arsenal open, closing it", s);
+        Close(slot);
     }
 
     /// <summary>
