@@ -152,16 +152,52 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private readonly bool[] _open  = new bool[MaxSlots];
 
     // ---- sticker mode -------------------------------------------------------
-    private readonly bool[]      _stickerMode = new bool[MaxSlots];
-
     /// <summary>
-    ///     Glove mode. Mutually exclusive with sticker mode: both are "not the weapon list", and
-    ///     letting them overlap would leave the dock showing sticker controls for a glove.
+    ///     What the two columns are listing. This used to be a pair of booleans that had to never
+    ///     both be true; with knives, pins and music that becomes four flags and twelve invalid
+    ///     combinations, so it is one value instead and the compiler checks the branches.
     /// </summary>
-    private readonly bool[]      _gloveMode = new bool[MaxSlots];
+    private enum Browse
+    {
+        Weapons,
+        Knives,
+        Gloves,
+        Stickers,
+        Pins,
+        Music,
+    }
+
+    private readonly Browse[]    _mode = new Browse[MaxSlots];
+
+    private List<string>? _guns;
+    private List<string>? _knives;
+
+    private readonly List<string>                _pinGroups   = new();
+    private readonly List<string>                _musicGroups = new();
+    private readonly Dictionary<string, Cosmetic[]> _pins  = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Cosmetic[]> _music = new(StringComparer.Ordinal);
+
+    private readonly int[] _psel  = new int[MaxSlots];   // pin group / kit group
+    private readonly int[] _pisel = new int[MaxSlots];   // pin / kit within it
+    private readonly int[] _ppage = new int[MaxSlots];
+
+    private readonly float[] _equipNoticeUntil = new float[MaxSlots];
+
+    private readonly SoundOpEventGuid?[] _musicGuid = new SoundOpEventGuid?[MaxSlots];
+
+    /// <summary>A pin or a music kit: an item definition, a name, and the art to show for it.</summary>
+    private sealed record Cosmetic(int Def, string Name, string SchemaName);
+
+    private sealed record EconEntry(string Name, string Image);
+
+    private readonly Dictionary<int, EconEntry> _econNames = new();
+
 
     private readonly int[]       _gsel  = new int[MaxSlots];
     private readonly int[]       _gfsel = new int[MaxSlots];
+
+    /// <summary>The icon class currently on the glove preview panel, so it can be taken off.</summary>
+    private readonly string[]    _econIconOn = Enumerable.Repeat("", MaxSlots).ToArray();
 
     /// <summary>
     ///     Slot whose gloves were applied this tick and still need their refresh, and the frame
@@ -186,12 +222,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     /// </remarks>
     private bool                 _glove3d;
 
-    /// <summary>Slot to respawn on the next frame, set by EQUIP in glove mode.</summary>
-    private readonly bool[]      _respawnPending = new bool[MaxSlots];
-
     private readonly float[]     _gloveDueAt = new float[MaxSlots];
 
-    /// <summary>Glove key -> item definition index and display name, from armory_gloves.json.</summary>
+    /// <summary>Glove key -> item definition index and display name, from the game schema.</summary>
     private readonly List<string>                 _gloves      = new();
     private readonly Dictionary<string, int>      _gloveDefs   = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string>   _gloveNames  = new(StringComparer.Ordinal);
@@ -282,6 +315,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private readonly IBaseEntity?[] _cam = new IBaseEntity?[MaxSlots];
     private readonly Vector?[] _eye = new Vector?[MaxSlots];
     private readonly IArsenalStore       _store;
+    private readonly ISchemaCatalogue    _schema;
     private readonly ICommandManager     _commands;
 
     private readonly bool[]   _spawnFailed = new bool[MaxSlots];
@@ -333,10 +367,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                        ISharedSystem        sharedSystem,
                        ISkinApplier         applier,
                        IArsenalStore        store,
+                       ISchemaCatalogue     schema,
                        ICommandManager      commands,
                        ILogger<ArsenalMenu> logger)
     {
         _store    = store;
+        _schema   = schema;
         _commands = commands;
         _bridge    = bridge;
         _customHud = sharedSystem.GetPanoramaManager();
@@ -351,8 +387,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     public bool Init()
     {
         LoadCatalogue();
-        LoadStickers();
-        LoadGloves();
+        LoadCosmetics();
 
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal", OnCommandOpen, "Open the arsenal browser");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_close", OnCommandClose, "Close the arsenal browser");
@@ -378,6 +413,10 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                                                   "Spawn a test light (cycles classnames)");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_build", OnCommandBuild,
                                                   "Toggle spawning the preview vs giving and dropping it");
+        _bridge.ConVarManager.CreateServerCommand("armory_schema", OnCommandSchema,
+                                                  "Build the catalogues from the game and report");
+        _bridge.ConVarManager.CreateServerCommand("armory_file_probe", OnCommandFileProbe,
+                                                  "Can we read items_game.txt straight from the game?");
         _bridge.ConVarManager.CreateServerCommand("armory_script_probe", OnCommandScriptProbe,
                                                   "Spawn a point_script at runtime to see if cs_script runs");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_knife", OnCommandProbe,
@@ -445,10 +484,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             _builtOurselves[i] = false;
             _dressedPawn[i]    = default;
             _open[i]           = false;
-            _stickerMode[i]    = false;
-            _gloveMode[i]      = false;
+            _mode[i]           = Browse.Weapons;
             _glovePending[i]   = false;
-            _respawnPending[i] = false;
             _hiddenWeapons[i].Clear();
         }
     }
@@ -525,45 +562,66 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
     // ------------------------------------------------------------------ catalogue
 
+    /// <summary>
+    ///     Everything comes from the GAME now, built on load, so a CS2 update can never leave the
+    ///     browser showing a stale catalogue. This replaced four generated JSON files and the
+    ///     Python VPK reader that produced them.
+    /// </summary>
     private void LoadCatalogue()
     {
-        var path = Path.Combine(_bridge.SharpPath, "configs", "armory_arsenal.json");
+        var cat = _schema.Build();
 
-        if (!File.Exists(path))
+        foreach (var (weapon, finishes) in cat.Weapons)
         {
-            _logger.LogError("Arsenal catalogue missing at {path} - the browser will be empty", path);
-
-            return;
+            _weapons.Add(weapon);
+            _finishes[weapon] = finishes.Select(f => new Finish(f.Paint, f.Name, f.Rarity)).ToArray();
         }
 
-        try
+        _weapons.Sort(StringComparer.Ordinal);
+
+        foreach (var (key, glove) in cat.Gloves)
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-
-            foreach (var weapon in doc.RootElement.EnumerateObject())
-            {
-                var list = new List<Finish>();
-
-                foreach (var s in weapon.Value.EnumerateArray())
-                {
-                    var rarity = Array.IndexOf(Rarities, s.GetProperty("r").GetString() ?? "consumer");
-                    list.Add(new Finish(s.GetProperty("i").GetInt32(),
-                                        s.GetProperty("n").GetString() ?? "?",
-                                        rarity < 0 ? 0 : rarity));
-                }
-
-                _weapons.Add(weapon.Name);
-                _finishes[weapon.Name] = list.ToArray();
-            }
-
-            _weapons.Sort(StringComparer.Ordinal);
-            _logger.LogInformation("Arsenal: {weapons} weapons, {skins} finishes",
-                                   _weapons.Count, _finishes.Values.Sum(v => v.Length));
+            _gloves.Add(key);
+            _gloveDefs[key]  = glove.Def;
+            _gloveNames[key] = glove.Name;
+            _gloveSkins[key] = glove.Finishes.Select(f => new Finish(f.Paint, f.Name, -1)).ToArray();
         }
-        catch (Exception ex)
+
+        _gloves.Sort((x, y) => string.CompareOrdinal(_gloveNames[x], _gloveNames[y]));
+
+        // Music kits group by the artist's initial: grouping by artist gives 82 groups of one,
+        // which is a useless column.
+        foreach (var g in cat.Music.GroupBy(m =>
+                 {
+                     var artist = m.Name.Split(',')[0].Trim().ToUpperInvariant();
+
+                     return artist.Length > 0 && char.IsLetter(artist[0]) ? artist[..1] : "0-9";
+                 }).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
-            _logger.LogError(ex, "Could not read the arsenal catalogue");
+            _musicGroups.Add(g.Key);
+            _music[g.Key] = g.Select(m => new Cosmetic(m.Id, m.Name, m.SchemaName)).ToArray();
         }
+
+        foreach (var (collection, list) in cat.Stickers)
+        {
+            _collections.Add(collection);
+            _stickers[collection] = list.Select(f => new Finish(f.Paint, f.Name, -1)).ToArray();
+        }
+
+        _collections.Sort(StringComparer.Ordinal);
+
+        _logger.LogInformation("Stickers: {collections} collections, {count} stickers",
+                               _collections.Count, _stickers.Values.Sum(v => v.Length));
+
+        foreach (var (idx, name) in cat.ItemNames)
+        {
+            _econNames[idx] = new EconEntry(name, cat.ItemImages.GetValueOrDefault(idx, ""));
+        }
+
+        _logger.LogInformation("Arsenal: {weapons} weapons, {skins} finishes",
+                               _weapons.Count, _finishes.Values.Sum(v => v.Length));
+        _logger.LogInformation("Gloves: {gloves} gloves, {skins} finishes",
+                               _gloves.Count, _gloveSkins.Values.Sum(v => v.Length));
     }
 
     /// <summary>
@@ -578,112 +636,6 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private static string SpawnClass(string weapon)
         => IsKnife(weapon) ? "weapon_knife" : weapon;
 
-    /// <summary>Classname to item definition index. Cached; the mapping never changes at runtime.</summary>
-    private ushort? ResolveItemDef(string weapon)
-    {
-        if (_itemDefs.TryGetValue(weapon, out var cached))
-        {
-            return cached;
-        }
-
-        var resolved = _bridge.EconItemManager.GetEconItemDefinitionByName(weapon)?.Index;
-        _itemDefs[weapon] = resolved;
-
-        return resolved;
-    }
-
-    /// <summary>
-    ///     Gloves are not in the weapon catalogue and cannot be: they are not in the loot-list
-    ///     format weapons use, so the weapon builder never sees them. tools/build_gloves.py maps
-    ///     them by paint-kit name prefix instead, and every glove has TWO generations of prefix.
-    /// </summary>
-    private void LoadGloves()
-    {
-        var path = Path.Combine(_bridge.SharpPath, "configs", "armory_gloves.json");
-
-        if (!File.Exists(path))
-        {
-            _logger.LogWarning("Glove catalogue missing at {path} - glove mode will be empty", path);
-
-            return;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-
-            foreach (var glove in doc.RootElement.EnumerateObject())
-            {
-                var list = new List<Finish>();
-
-                foreach (var f in glove.Value.GetProperty("finishes").EnumerateArray())
-                {
-                    list.Add(new Finish(f.GetProperty("i").GetInt32(),
-                                        f.GetProperty("n").GetString() ?? "?",
-                                        0));
-                }
-
-                _gloves.Add(glove.Name);
-                _gloveDefs[glove.Name]  = glove.Value.GetProperty("def").GetInt32();
-                _gloveNames[glove.Name] = glove.Value.GetProperty("name").GetString() ?? glove.Name;
-                _gloveSkins[glove.Name] = list.ToArray();
-            }
-
-            _gloves.Sort((a, b) => string.CompareOrdinal(_gloveNames[a], _gloveNames[b]));
-            _logger.LogInformation("Gloves: {gloves} gloves, {skins} finishes",
-                                   _gloves.Count, _gloveSkins.Values.Sum(v => v.Length));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Could not read the glove catalogue");
-        }
-    }
-
-    private Finish[] GloveSkinsFor(int s)
-        => _gloves.Count > 0 && _gloveSkins.TryGetValue(_gloves[_gsel[s]], out var f)
-            ? f
-            : Array.Empty<Finish>();
-
-    private void LoadStickers()
-    {
-        var path = Path.Combine(_bridge.SharpPath, "configs", "armory_stickers.json");
-
-        if (!File.Exists(path))
-        {
-            _logger.LogWarning("Sticker catalogue missing at {path} - sticker mode will be empty", path);
-
-            return;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-
-            foreach (var collection in doc.RootElement.EnumerateObject())
-            {
-                var list = new List<Finish>();
-
-                foreach (var k in collection.Value.EnumerateArray())
-                {
-                    var rarity = Array.IndexOf(Rarities, k.GetProperty("r").GetString() ?? "consumer");
-                    list.Add(new Finish(k.GetProperty("i").GetInt32(),
-                                        k.GetProperty("n").GetString() ?? "?",
-                                        rarity < 0 ? 0 : rarity));
-                }
-
-                _collections.Add(collection.Name);
-                _stickers[collection.Name] = list.ToArray();
-            }
-
-            _collections.Sort(StringComparer.Ordinal);
-            _logger.LogInformation("Stickers: {collections} collections, {count} stickers",
-                                   _collections.Count, _stickers.Values.Sum(v => v.Length));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Could not read the sticker catalogue");
-        }
-    }
 
     private Finish[] StickersFor(int slot)
         => _collections.Count > 0 && _stickers.TryGetValue(_collections[_csel[slot]], out var k)
@@ -754,41 +706,80 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         var s = slot.AsPrimitive();
 
-        Cls(slot, "root", "Stickers", _stickerMode[s]);
-        Cls(slot, "stk_row", "Hide", !_stickerMode[s]);
-        Cls(slot, "btn_mode", "On", _stickerMode[s]);
+        Cls(slot, "root", "Stickers", (_mode[s] == Browse.Stickers));
+        Cls(slot, "stk_row", "Hide", _mode[s] != Browse.Stickers);
+        Cls(slot, "btn_mode", "On", (_mode[s] == Browse.Stickers));
         Txt(slot, "rot_v", ((int) _yaw[s]).ToString());
         Txt(slot, "zoom_v", Zoomed(s).ToString("0.00"));
         Txt(slot, "panx_v", _panH[s].ToString("0"));
         Txt(slot, "pany_v", _panV[s].ToString("0"));
-        Cls(slot, "btn_mode", "On", _stickerMode[s]);
+        Cls(slot, "btn_mode", "On", (_mode[s] == Browse.Stickers));
 
-        Cls(slot, "btn_gloves", "On", _gloveMode[s]);
-        Cls(slot, "stk_row", "Hide", !_stickerMode[s]);
+        Cls(slot, "btn_gloves", "On", (_mode[s] == Browse.Gloves));
 
-        if (_gloveMode[s])
+        Cls(slot, "stk_row", "Hide", _mode[s] != Browse.Stickers);
+
+        Cls(slot, "btn_weapons", "On", _mode[s] == Browse.Weapons);
+        Cls(slot, "btn_knives",  "On", _mode[s] == Browse.Knives);
+        Cls(slot, "btn_pins",    "On", _mode[s] == Browse.Pins);
+        Cls(slot, "btn_music",   "On", _mode[s] == Browse.Music);
+        Cls(slot, "deck", "Hide", _mode[s] != Browse.Music);
+        Txt(slot, "btn_listen_g", _musicGuid[s] is null ? "▶" : "■");
+
+        // The dock belongs to the weapon preview: the view controls turn and zoom it, and
+        // STICKERS is something you do TO a weapon. None of it means anything while picking a
+        // pin or a glove, so the whole dock goes away outside the weapon and knife lists.
+        var weaponish = _mode[s] is Browse.Weapons or Browse.Knives or Browse.Stickers;
+
+        Cls(slot, "view_row", "Hide", !weaponish);
+        Cls(slot, "btn_mode", "On", _mode[s] == Browse.Stickers);
+
+        // and stickers do not go on a knife
+        Cls(slot, "btn_mode", "Hide", _mode[s] == Browse.Knives);
+
+        switch (_mode[s])
         {
-            try
-            {
-                RefreshGloves(slot, s);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("glove list failed to draw: {msg}", ex.Message);
-            }
+            case Browse.Gloves:
+                try
+                {
+                    RefreshGloves(slot, s);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("glove list failed to draw: {msg}", ex.Message);
+                }
 
-            ShowGloves(slot);
+                ShowGloves(slot);
 
-            return;
-        }
+                return;
 
-        if (_stickerMode[s])
-        {
-            RefreshStickers(slot, s);
-        }
-        else
-        {
-            RefreshFinishes(slot, s);
+            case Browse.Pins:
+            case Browse.Music:
+                try
+                {
+                    RefreshCosmetics(slot, s);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("cosmetic list failed to draw: {msg}", ex);
+                }
+
+                DropItem(s);
+                KillLamp(s);
+
+                return;
+
+            case Browse.Stickers:
+                ShowEconIcon(slot, "");
+                RefreshStickers(slot, s);
+
+                break;
+
+            default:
+                ShowEconIcon(slot, "");
+                RefreshFinishes(slot, s);
+
+                break;
         }
 
         ShowItem(slot);
@@ -799,11 +790,15 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         Txt(slot, "title", "FINISH");
         Txt(slot, "sec_l", "01  WEAPON");
         Txt(slot, "sec_r", "02  FINISH");
-        Txt(slot, "sec_l_c", _weapons.Count.ToString());
+        // Knives are their own category now: 35 guns and 20 knives read far better than one
+        // 55 long list where the knives are buried in the middle.
+        var list_ = _mode[s] == Browse.Knives ? KnifeList() : GunList();
 
-        // No page offset: 55 weapons fit inside the 72 declared rows and the client scrolls.
-        Rows_(slot, "wp", _weapons.Count, 0, _wsel[s],
-              i => Pretty(_weapons[i]), i => Calibre(_weapons[i]), _ => -1);
+        Txt(slot, "sec_l", _mode[s] == Browse.Knives ? "01  KNIFE" : "01  WEAPON");
+        Txt(slot, "sec_l_c", list_.Count.ToString());
+
+        Rows_(slot, "wp", list_.Count, 0, WeaponRow(s),
+              i => Pretty(list_[i]), i => Calibre(list_[i]), _ => -1);
 
         var list = FinishesFor(s);
         Txt(slot, "sec_r_c", list.Length.ToString());
@@ -845,6 +840,56 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         if (list.Length > 0 && _gfsel[s] < list.Length)
         {
             Readout(slot, list[_gfsel[s]].Name, -1);
+        }
+    }
+
+    /// <summary>
+    ///     Pins and music kits share a shape: a family on the left, its items on the right, and
+    ///     an icon for whatever is selected. The right list can run to 145, so it pages like the
+    ///     sticker list rather than relying on the 72 declared rows.
+    /// </summary>
+    private void RefreshCosmetics(PlayerSlot slot, int s)
+    {
+        var pins   = _mode[s] == Browse.Pins;
+        var groups = pins ? _pinGroups : _musicGroups;
+        var list   = pins ? PinsFor(s) : MusicFor(s);
+
+        _logger.LogInformation("cosmetics: mode={m} groups={g} sel={sel} items={n}",
+                               _mode[s], groups.Count, _psel[s], list.Count);
+
+        Txt(slot, "title",   pins ? "PINS" : "MUSIC");
+        Txt(slot, "sec_l",   pins ? "01  FAMILY" : "01  ARTIST");
+        Txt(slot, "sec_r",   pins ? "02  PIN" : "02  KIT");
+        Txt(slot, "sec_l_c", groups.Count.ToString());
+        Txt(slot, "sec_r_c", list.Count.ToString());
+
+        Rows_(slot, "wp", groups.Count, 0, _psel[s],
+              i => groups[i],
+              i => ((pins ? _pins : _music)[groups[i]].Length).ToString(),
+              _ => -1);
+
+        var pages = Math.Max(1, (list.Count + Rows - 1) / Rows);
+
+        Rows_(slot, "fn", list.Count, _ppage[s], _pisel[s],
+              i => list[i].Name, _ => string.Empty, _ => -1);
+
+        Cls(slot, "fn_pager", "Hide", pages <= 1);
+        Txt(slot, "fn_page", pages > 1 ? $"{_ppage[s] + 1}/{pages}" : "");
+        Txt(slot, "idx", Two(_pisel[s] + 1));
+
+        if (list.Count > 0 && _pisel[s] < list.Count)
+        {
+            Readout(slot, list[_pisel[s]].Name, -1);
+            ShowEconIcon(slot, (pins ? "p" : "m") + list[_pisel[s]].Def);
+
+            if (!pins)
+            {
+                Txt(slot, "deck_name", list[_pisel[s]].Name);
+            }
+        }
+        else
+        {
+            ShowEconIcon(slot, "");
         }
     }
 
@@ -1541,9 +1586,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         var s = slot.AsPrimitive();
 
-        if (_gloveMode[s])
+        if (_mode[s] == Browse.Gloves)
         {
             EquipGloves(slot, player, s);
+
+            return;
+        }
+
+        if (_mode[s] == Browse.Pins || _mode[s] == Browse.Music)
+        {
+            EquipCosmetic(slot, player, s);
 
             return;
         }
@@ -1561,6 +1613,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var pick     = list[_fsel[s]];
         var isKnife  = IsKnife(wanted);
         var stickers = StickerJson(s);
+
+        Equipped(slot, pick.Name);
 
         if (player.GetGameClient() is not { IsFakeClient: false } client)
         {
@@ -1657,226 +1711,34 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     }
 
     /// <summary>
-    ///     Glove preview: hand the player their own hands back.
+    ///     Glove mode is a LIST, not a preview.
     ///     <br /><br />
-    ///     Gloves are WORN, not held, so there is nothing to float in front of a camera the way
-    ///     the weapon preview does. The only place gloves actually look like gloves is first
-    ///     person, so glove mode reverses the three things the browser normally does to the
-    ///     player: the detached camera goes away, the pawn becomes visible AGAIN TO ITSELF ONLY,
-    ///     and it gets a weapon to hold so the arms are drawn at all.
+    ///     Gloves are worn, so there is nothing to float in front of a camera, and they cannot be
+    ///     previewed on the player either: a glove is resolved when the pawn is built and never
+    ///     again. GiveGloves, flipping the bodygroup, holstering and redrawing the weapon, and all
+    ///     of that deferred a tick, were each confirmed to run and none of them made the client
+    ///     look again. Spawning the glove as a model does not work either, because a weapon entity
+    ///     handed a glove definition keeps its own model and crashes the server. See
+    ///     docs/PREVIEW.md.
     ///     <br /><br />
-    ///     It stays SolidType.None throughout: visible to yourself is not the same as being back
-    ///     in the round, and nobody should be able to shoot a player who is picking gloves.
+    ///     So the browser shows the names and EQUIP respawns the player wearing the choice, which
+    ///     is the only moment a glove can actually change.
     /// </summary>
     private void ShowGloves(PlayerSlot slot)
     {
         var s = slot.AsPrimitive();
 
-        _logger.LogInformation("glove preview: entered, {n} gloves in catalogue", _gloves.Count);
-
-        DropItem(s);          // no floating weapon in glove mode
+        DropItem(s);   // no floating weapon while picking gloves
         KillLamp(s);
 
-        if (_gloves.Count == 0)
-        {
-            _logger.LogWarning("glove preview: catalogue is empty");
+        var list = GloveSkinsFor(s);
 
-            return;
-        }
-
-        if (Pawn(slot) is not { } pawn || !pawn.IsValid())
-        {
-            _logger.LogWarning("glove preview: no valid pawn for slot {s}", slot.AsPrimitive());
-
-            return;
-        }
-
-        if (_glove3d)
-        {
-            ShowGloveModel(slot, s);
-
-            return;
-        }
-
-        AttachView(slot, null);   // back to the player's own eyes
-
-        try
-        {
-            // visible to themselves, still hidden from everyone else
-            _bridge.TransmitManager.SetEntityBlock(pawn.Index, false);
-            pawn.RenderMode  = RenderMode.Normal;
-            pawn.RenderColor = new Color32(255, 255, 255, 255);
-            HideFromOthers(pawn, slot);
-            RestoreHeldWeapons(s);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("glove preview: could not show the pawn: {msg}", ex.Message);
-        }
-
-        var glove = _gloves[_gsel[s]];
-        var list  = GloveSkinsFor(s);
-        var paint = list.Length > 0 && _gfsel[s] < list.Length ? list[_gfsel[s]].Paint : 0;
-
-        // Applied anyway, so the gloves are already correct the moment EQUIP respawns them.
-        // It will NOT show up by scrolling: gloves are resolved when the pawn is created and
-        // never again, which is why Gloves.cs applies them in PlayerSpawnPost. GiveGloves, the
-        // bodygroup flip, a weapon holster/redraw and a deferred pass of all three were each
-        // confirmed to run and none of them make the client look again. See docs/PREVIEW.md -
-        // it is the same wall as re-skinning a live weapon.
-        try
-        {
-            pawn.GiveGloves((EconGlovesId) _gloveDefs[glove], paint, 0.01f, 0);
-
-            // GiveGloves alone does not make the client redraw the hands. Gloves.cs follows it
-            // with CCSPlayerPawn::SetGlovesBodyGroup, but that is found by a signature scan which
-            // expects ONE reader of the first_or_third_person token and now finds six, so it has
-            // been a null pointer since some CS2 update - the module warns about it at startup.
-            // Toggling the bodygroup by name is the same thing by a supported route.
-            _glovePending[s] = true;
-            _gloveDueAt[s]   = _bridge.ModSharp.GetGlobals().CurTime + 0.10f;
-
-            var toggled = false;
-
-            foreach (var group in new[] { "default_gloves", "gloves", "hands" })
-            {
-                try
-                {
-                    // 1 then 0: a single set is not a CHANGE the second time round, so scrolling
-                    // to another finish wrote the same value and the client had no reason to
-                    // rebuild anything. The flip is what forces the refresh.
-                    pawn.SetBodyGroupByName(group, 1);
-                    pawn.SetBodyGroupByName(group, 0);
-                    toggled = true;
-
-                    break;
-                }
-                catch
-                {
-                    // wrong name for this model; try the next
-                }
-            }
-
-            // Gloves are drawn on the VIEWMODEL ARMS, and the arms are only drawn when a weapon
-            // is deployed. Browsing with empty hands renders nothing at all, so there is nothing
-            // for a glove to appear on however correctly it was applied.
-            var held = "none";
-
-            try
-            {
-                if (pawn.GetWeaponService() is { } svc)
-                {
-                    IBaseWeapon? first = null;
-
-                    foreach (var h in svc.GetMyWeapons())
-                    {
-                        if (_bridge.EntityManager.FindEntityByHandle(h) is IBaseWeapon w && w.IsValid())
-                        {
-                            first = w;
-
-                            break;
-                        }
-                    }
-
-                    var active = pawn.GetActiveWeapon();
-
-                    if (active is null || !active.IsValid())
-                    {
-                        active = first;
-                    }
-
-                    if (active is not null && active.IsValid())
-                    {
-                        held = active.GetWeaponClassname();
-
-                        // The arms are rebuilt when a weapon is DEPLOYED, and that is the only
-                        // moment the client resolves which gloves are on them. Holster and draw
-                        // to force it - the server-side equivalent of the lastinv trick the
-                        // reference plugin uses for exactly this.
-                        pawn.SwitchWeapon(null);
-                        pawn.SwitchWeapon(active);
-                        held += " redeployed";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("glove preview: could not deploy a weapon: {msg}", ex.Message);
-            }
-
-            var cam = pawn.GetCameraService()?.ViewEntityHandle.IsValid() == true ? "detached" : "first person";
-
-            _logger.LogInformation(
-                "glove preview: {glove} paint {paint}, bodygroup {b}, camera {cam}, weapon {held}",
-                _gloveNames[glove], paint, toggled ? "toggled" : "NOT toggled", cam, held);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("glove preview: GiveGloves threw: {msg}", ex.Message);
-        }
-    }
-
-    /// <summary>
-    ///     The second half of a glove change, a tick after the gloves were written. Flipping the
-    ///     bodygroup and redeploying in the SAME tick as GiveGloves never took; the reference
-    ///     implementation defers this and that is the difference being tested.
-    /// </summary>
-    private void RefreshGloveModel(PlayerSlot slot)
-    {
-        if (Pawn(slot) is not { } pawn || !pawn.IsValid())
+        if (list.Length == 0 || _gfsel[s] >= list.Length)
         {
             return;
         }
 
-        try
-        {
-            pawn.SetBodyGroupByName("default_gloves", 1);
-            pawn.SetBodyGroupByName("default_gloves", 0);
-
-            if (pawn.GetActiveWeapon() is { } active && active.IsValid())
-            {
-                pawn.SwitchWeapon(null);
-                pawn.SwitchWeapon(active);
-            }
-
-            _logger.LogInformation("glove refresh: deferred pass ran");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("glove refresh threw: {msg}", ex.Message);
-        }
-    }
-
-    /// <summary>
-    ///     Rebuild the player's pawn so the gloves they just equipped are actually on their
-    ///     hands. Gloves.cs applies them in PlayerSpawnPost, so a respawn is the supported way
-    ///     to make a glove change visible at all.
-    /// </summary>
-    private void RespawnFor(PlayerSlot slot)
-    {
-        var s = slot.AsPrimitive();
-
-        foreach (var controller in _bridge.EntityManager.GetPlayerControllers())
-        {
-            if (controller is null || !controller.IsValid() || new PlayerSlot(controller) != slot)
-            {
-                continue;
-            }
-
-            try
-            {
-                controller.Respawn();
-                _dressedPawn[s] = 0;   // the new pawn needs dressing from scratch
-                _logger.LogInformation("equip: respawned slot {s} to show the gloves",
-                                       slot.AsPrimitive());
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning("equip: could not respawn: {msg}", ex.Message);
-            }
-
-            return;
-        }
+        ShowEconIcon(slot, "g" + list[_gfsel[s]].Paint);
     }
 
     /// <summary>
@@ -2004,6 +1866,117 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _lamp[s] = null;
     }
 
+    /// <summary>
+    ///     Pins and music kits are one loadout row and nothing else: no paint, no second row.
+    ///     The spawn hook reads the slot and applies it.
+    /// </summary>
+    private void EquipCosmetic(PlayerSlot slot, IPlayerController player, int s)
+    {
+        var pins = _mode[s] == Browse.Pins;
+        var list = pins ? PinsFor(s) : MusicFor(s);
+
+        if (list.Count == 0 || _pisel[s] >= list.Count)
+        {
+            return;
+        }
+
+        var pick = list[_pisel[s]];
+
+        if (player.GetGameClient() is not { IsFakeClient: false } client)
+        {
+            return;
+        }
+
+        ulong steamId = client.SteamId;
+        var    what   = pins ? "Medal" : "Music";
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                foreach (var team in (int[]) [2, 3])
+                {
+                    await _store.SaveLoadoutItem(steamId, team, what, pick.Def);
+                }
+
+                _store.Invalidate(steamId);
+                _logger.LogInformation("equip: {what} {name} ({def}) saved for {steam}",
+                                       what, pick.Name, pick.Def, steamId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("equip: could not save {name}: {msg}", pick.Name, ex.Message);
+            }
+        });
+
+        Equipped(slot, pick.Name);
+    }
+
+    /// <summary>
+    ///     Say what just happened. A click that saves silently reads as a click that did nothing,
+    ///     which is exactly how EQUIP felt before.
+    /// </summary>
+    private void Equipped(PlayerSlot slot, string name)
+    {
+        Txt(slot, "equipped", "EQUIPPED  " + name.ToUpperInvariant());
+        Cls(slot, "equipped", "Show", true);
+        _equipNoticeUntil[slot.AsPrimitive()] = _bridge.ModSharp.GetGlobals().CurTime + 3f;
+    }
+
+    /// <summary>Row clicks while listing pins or music kits.</summary>
+    private bool CosmeticClick(PlayerSlot slot, int s, string buttonId)
+    {
+        var groups = _mode[s] == Browse.Pins ? _pinGroups : _musicGroups;
+        var list   = _mode[s] == Browse.Pins ? PinsFor(s) : MusicFor(s);
+        var pages  = Math.Max(1, (list.Count + Rows - 1) / Rows);
+
+        if (buttonId.StartsWith("wp", StringComparison.Ordinal)
+            && int.TryParse(buttonId.AsSpan(2), out var g) && g < groups.Count)
+        {
+            _psel[s]  = g;
+            _pisel[s] = 0;
+            _ppage[s] = 0;
+            StopMusicPreview(slot);   // the old preview does not belong to the new group
+            Refresh(slot);
+
+            return true;
+        }
+
+        if (buttonId.StartsWith("fn", StringComparison.Ordinal)
+            && int.TryParse(buttonId.AsSpan(2), out var i))
+        {
+            var idx = _ppage[s] * Rows + i;
+
+            if (idx < list.Count && idx != _pisel[s])
+            {
+                _pisel[s] = idx;
+                StopMusicPreview(slot);   // stop the kit they were listening to, not this one
+                Refresh(slot);
+            }
+
+            return true;
+        }
+
+        switch (buttonId)
+        {
+            case "fn_prev":
+                _ppage[s] = (_ppage[s] - 1 + pages) % pages;
+                StopMusicPreview(slot);
+                Refresh(slot);
+
+                return true;
+
+            case "fn_next":
+                _ppage[s] = (_ppage[s] + 1) % pages;
+                StopMusicPreview(slot);
+                Refresh(slot);
+
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>Row clicks while in glove mode. Returns true when the click was ours.</summary>
     private bool GloveClick(PlayerSlot slot, int s, string buttonId)
     {
@@ -2079,6 +2052,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var def   = _gloveDefs[glove];
         var paint = list[_gfsel[s]].Paint;
 
+        Equipped(slot, _gloveNames[glove] + " " + list[_gfsel[s]].Name);
+
         if (player.GetGameClient() is not { IsFakeClient: false } client)
         {
             return;
@@ -2102,10 +2077,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 _logger.LogInformation("equip: {glove} paint {paint} saved for {steam}",
                                        _gloveNames[glove], paint, steamId);
 
-                // Respawn: a glove only reaches the client when the pawn is built, so this is
-                // what actually puts it on their hands. Without it the player would have to die
-                // or rebuy to see the thing they just chose.
-                _respawnPending[slot.AsPrimitive()] = true;
+                // NO respawn. It used to force one here, because a glove only reaches the client
+                // when the pawn is built and that was the only way to show the choice. The icon
+                // preview does that job now, and rebuilding the pawn threw the player out of what
+                // they were doing and brought the stock CS2 HUD back with it. The glove lands on
+                // their next natural spawn, like every other equipped item.
             }
             catch (Exception ex)
             {
@@ -2190,8 +2166,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var s    = slot.AsPrimitive();
 
         _open[s]        = false;
-        _stickerMode[s] = false;
-        _gloveMode[s]   = false;
+        _mode[s] = Browse.Weapons;
         _spawnFailed[s] = false;
         _spawned[s]     = "";
         _dressedPawn[s] = default;
@@ -2224,6 +2199,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var slot = client.Slot;
         var s    = slot.AsPrimitive();
 
+        StopMusicPreview(slot);
+
         if (_open[s])
         {
             _logger.LogInformation("slot {s} left with the arsenal open, closing it", s);
@@ -2252,6 +2229,254 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         return 0;
     }
+
+    /// <summary>
+    ///     Build the pin and music kit lists from the GAME's own schema rather than from
+    ///     items_game.txt.
+    ///     <br /><br />
+    ///     Both apply hooks refuse anything whose DefaultLoadoutSlot is not 55, so that is the
+    ///     only definition of "equippable" that matters, and asking the schema for it cannot drift
+    ///     out of step the way a parsed catalogue can. Parsing produced 536 pins of which almost
+    ///     none were equippable, and music kit ids that were not item definition indices at all,
+    ///     so equipping either saved a row the spawn hook then silently ignored.
+    /// </summary>
+    private void LoadCosmetics()
+    {
+        var pins = new List<Cosmetic>();
+
+        foreach (var (_, def) in _bridge.EconItemManager.GetEconItems())
+        {
+            if (def.DefaultLoadoutSlot != 55)
+            {
+                continue;
+            }
+
+            var name = def.DefinitionName;
+
+            pins.Add(new Cosmetic(def.Index, Title(def), name));
+        }
+
+        Group(pins, _pinGroups, _pins, p => p.Name.Length > 0 && char.IsLetter(p.Name[0])
+                                                 ? p.Name[0].ToString().ToUpperInvariant()
+                                                 : "0-9");
+
+        // Music kits are NOT item definitions: the whole schema holds two `musickit` items and
+        // neither is a kit, so walking the item list can never find them. They live in their own
+        // music_definitions block with their own ids, which is what inventory.MusicId takes, and
+        // the schema reader picks them up from there.
+
+        _logger.LogInformation("pins: {p} in {pg} groups, music kits: {m} in {mg} groups",
+                               pins.Count, _pinGroups.Count,
+                               _music.Values.Sum(v => v.Length), _musicGroups.Count);
+    }
+
+
+    /// <summary>The name a player would recognise, falling back to the schema name.</summary>
+    private string Title(IEconItemDefinition def)
+    {
+        // _econNames is definition index -> display name and icon path, read from the game's own
+        // items_game.txt and csgo_english.txt on load. The SCHEMA decides what is equippable;
+        // this only supplies the words and the picture.
+        return _econNames.TryGetValue(def.Index, out var e) && e.Name.Length > 0
+            ? e.Name
+            : def.DefinitionName;
+    }
+
+    private static void Group(List<Cosmetic> items,
+        List<string>                         groups,
+        Dictionary<string, Cosmetic[]>       byGroup,
+        Func<Cosmetic, string>               key)
+    {
+        var map = new Dictionary<string, List<Cosmetic>>(StringComparer.Ordinal);
+
+        foreach (var c in items.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            map.TryAdd(key(c), new List<Cosmetic>());
+            map[key(c)].Add(c);
+        }
+
+        foreach (var (g, list) in map.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            groups.Add(g);
+            byGroup[g] = list.ToArray();
+        }
+    }
+
+    /// <summary>
+    ///     Put one econ icon on screen and take the previous one off. The class carries a prefix
+    ///     so a glove paint and a pin definition can never collide on the same number: g for a
+    ///     glove finish, p for a pin, m for a music kit. Every class lives in econicons.css and
+    ///     points at CS2's own art through s2r://, so nothing ships with the plugin.
+    /// </summary>
+    private void ShowEconIcon(PlayerSlot slot, string cls)
+    {
+        var s = slot.AsPrimitive();
+
+        if (_econIconOn[s].Length > 0 && _econIconOn[s] != cls)
+        {
+            Cls(slot, "econ_icon", _econIconOn[s], false);
+        }
+
+        if (cls.Length > 0)
+        {
+            Cls(slot, "econ_icon", cls, true);
+        }
+
+        _econIconOn[s] = cls;
+        Cls(slot, "econ_shot", "Hide", cls.Length == 0);
+    }
+
+    /// <summary>
+    ///     Preview a music kit, played by the SERVER rather than by Panorama.
+    ///     <br /><br />
+    ///     The CSS `sound:` property fires a one-shot when the class changes, which cannot be
+    ///     stopped and fires unreliably: setting the class off and on in one frame coalesces into
+    ///     no change at all, so a second press on the same kit did nothing. StartSoundEvent hands
+    ///     back a guid, so the preview can be stopped when the player picks something else,
+    ///     changes mode, or closes the browser.
+    /// </summary>
+    private void PlayMusicPreview(PlayerSlot slot, int s)
+    {
+        var list = MusicFor(s);
+
+        if (_mode[s] != Browse.Music || list.Count == 0 || _pisel[s] >= list.Count)
+        {
+            return;
+        }
+
+        var kit = list[_pisel[s]];
+
+        // pressing it again while it is playing stops it
+        if (_musicGuid[s] is not null)
+        {
+            StopMusicPreview(slot);
+
+            return;
+        }
+
+        if (kit.SchemaName.Length == 0)
+        {
+            return;
+        }
+
+        var sound = "Music.Background." + kit.SchemaName;
+
+        try
+        {
+            if (!_bridge.SoundManager.IsSoundEventValid(sound))
+            {
+                _logger.LogWarning("music preview: no soundevent {s}", sound);
+
+                return;
+            }
+
+            _musicGuid[s] = _bridge.SoundManager.StartSoundEvent(
+                sound, null, null, new RecipientFilter(slot));
+
+            Txt(slot, "btn_listen_g", "■");
+            Cls(slot, "btn_listen", "Playing", true);
+            _logger.LogInformation("music preview: {name}", kit.Name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("music preview threw: {msg}", ex.Message);
+        }
+    }
+
+    /// <summary>Silence a preview. Safe to call when nothing is playing.</summary>
+    private void StopMusicPreview(PlayerSlot slot)
+    {
+        var s = slot.AsPrimitive();
+
+        if (_musicGuid[s] is not { } guid)
+        {
+            return;
+        }
+
+        _musicGuid[s] = null;
+
+        try
+        {
+            _bridge.SoundManager.StopSoundEvent(guid, new RecipientFilter(slot));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("could not stop the music preview: {msg}", ex.Message);
+        }
+
+        Txt(slot, "btn_listen_g", "▶");
+        Cls(slot, "btn_listen", "Playing", false);
+    }
+
+    private IReadOnlyList<Cosmetic> PinsFor(int s)
+        => _pinGroups.Count > 0 && _pins.TryGetValue(_pinGroups[_psel[s]], out var v)
+            ? v
+            : Array.Empty<Cosmetic>();
+
+    private IReadOnlyList<Cosmetic> MusicFor(int s)
+        => _musicGroups.Count > 0 && _music.TryGetValue(_musicGroups[_psel[s]], out var v)
+            ? v
+            : Array.Empty<Cosmetic>();
+
+    /// <summary>Where the selected weapon sits in the list the current mode is showing.</summary>
+    private int WeaponRow(int s)
+    {
+        var list = _mode[s] == Browse.Knives ? KnifeList() : GunList();
+        var idx  = list.IndexOf(_weapons[_wsel[s]]);
+
+        return idx < 0 ? 0 : idx;
+    }
+
+    private Finish[] GloveSkinsFor(int s)
+        => _gloves.Count > 0 && _gloveSkins.TryGetValue(_gloves[_gsel[s]], out var f)
+            ? f
+            : Array.Empty<Finish>();
+
+    /// <summary>Classname to item definition index. Cached; the mapping never changes at runtime.</summary>
+    private ushort? ResolveItemDef(string weapon)
+    {
+        if (_itemDefs.TryGetValue(weapon, out var cached))
+        {
+            return cached;
+        }
+
+        var resolved = _bridge.EconItemManager.GetEconItemDefinitionByName(weapon)?.Index;
+        _itemDefs[weapon] = resolved;
+
+        return resolved;
+    }
+
+    /// <summary>Guns only, so knives can be a category of their own.</summary>
+    private List<string> GunList()
+        => _guns ??= _weapons.Where(w => !IsKnife(w)).ToList();
+
+    private List<string> KnifeList()
+        => _knives ??= _weapons.Where(IsKnife).ToList();
+
+    /// <summary>The list the LEFT column is showing, whatever the mode.</summary>
+    private int LeftCount(int s)
+        => _mode[s] switch
+        {
+            Browse.Weapons  => GunList().Count,
+            Browse.Knives   => KnifeList().Count,
+            Browse.Gloves   => _gloves.Count,
+            Browse.Stickers => _collections.Count,
+            Browse.Pins     => _pinGroups.Count,
+            Browse.Music    => _musicGroups.Count,
+            _               => 0,
+        };
+
+    /// <summary>The list the RIGHT column is showing, whatever the mode.</summary>
+    private int RightCount(int s)
+        => _mode[s] switch
+        {
+            Browse.Weapons or Browse.Knives => FinishesFor(s).Length,
+            Browse.Gloves                   => GloveSkinsFor(s).Length,
+            Browse.Stickers                 => StickersFor(s).Length,
+            Browse.Pins                     => PinsFor(s).Count,
+            Browse.Music                    => MusicFor(s).Count,
+            _                               => 0,
+        };
 
     private void DropItem(int s)
     {
@@ -2750,31 +2975,25 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 Layout()?.SetInputCaptureEnabled(slot, true);
             }
 
-            // Glove mode deliberately undoes all three of these: the player is looking through
-            // their OWN eyes at their OWN hands, so re-hiding the pawn, re-attaching the detached
-            // camera and re-spawning a floating weapon every tick would stamp it straight back
-            // out. That is exactly what happened the first time: the menu switched but the view
-            // never did.
-            if (_gloveMode[s] && !_glove3d)
+            if (_equipNoticeUntil[s] > 0f && now >= _equipNoticeUntil[s])
             {
-                if (_glovePending[s] && now >= _gloveDueAt[s])
-                {
-                    _glovePending[s] = false;
-                    RefreshGloveModel(slot);
-                }
-
-                // Respawn on the frame, never inside the database callback that requested it.
-                if (_respawnPending[s])
-                {
-                    _respawnPending[s] = false;
-                    RespawnFor(slot);
-                }
-
-                continue;
+                _equipNoticeUntil[s] = 0f;
+                Cls(slot, "equipped", "Show", false);
             }
 
+            // The camera and the frozen, hidden pawn are maintained in EVERY mode: the player is
+            // still standing in the browser whether they are picking a rifle or a music kit, and
+            // skipping these let the view drift away in the icon modes.
             Reassert(slot);
             PlaceCamera(slot);
+
+            // Only the weapon and knife lists have a 3D preview, though. The rebuild below fires
+            // whenever _item is null, which in the icon modes is always, so without this it
+            // respawned the last weapon once a second and it flashed while you picked a pin.
+            if (_mode[s] != Browse.Weapons && _mode[s] != Browse.Knives)
+            {
+                continue;
+            }
 
             // a weapon lying in the world with no owner is a dropped weapon, and the game removes
             // those on its own - that is the preview blinking out. Put it straight back.
@@ -2885,6 +3104,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         var s = slot.AsPrimitive();
 
+        StopMusicPreview(slot);
+
         AttachView(slot, null);
         RestoreHeldWeapons(s);
         DropRoom();
@@ -2988,49 +3209,42 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             return;
         }
 
-        if (buttonId == "btn_gloves")
+        // One button per mode. Switching mode is a SET, not a toggle: with six of them a toggle
+        // means tracking which others to turn off, which is what the old pair of booleans did
+        // badly.
+        var picked = buttonId switch
         {
-            _gloveMode[s] = !_gloveMode[s];
+            "btn_weapons"  => Browse.Weapons,
+            "btn_knives"   => Browse.Knives,
+            "btn_gloves"   => Browse.Gloves,
+            "btn_mode"     => Browse.Stickers,
+            "btn_pins"     => Browse.Pins,
+            "btn_music"    => Browse.Music,
+            _              => (Browse?) null,
+        } ?? Browse.Weapons;
 
-            if (_gloveMode[s])
+        if (buttonId.StartsWith("btn_", StringComparison.Ordinal)
+            && buttonId is "btn_weapons" or "btn_knives" or "btn_gloves"
+                        or "btn_mode" or "btn_pins" or "btn_music")
+        {
+            var was = _mode[s];
+
+            // clicking the mode you are already in goes back to the weapon list
+            _mode[s] = was == picked ? Browse.Weapons : picked;
+
+            if (_mode[s] != Browse.Music)
             {
-                _stickerMode[s] = false;   // never both
+                StopMusicPreview(slot);
             }
-            else
+
+            if (was == Browse.Gloves && _mode[s] != Browse.Gloves)
             {
-                LeaveGloveMode(slot);
-            }
-
-            Refresh(slot);
-
-            return;
-        }
-
-        if (_gloveMode[s] && GloveClick(slot, s, buttonId))
-        {
-            return;
-        }
-
-        var leftCount  = _gloveMode[s] ? _gloves.Count
-            : _stickerMode[s] ? _collections.Count : _weapons.Count;
-
-        var rightCount = _gloveMode[s] ? GloveSkinsFor(s).Length
-            : _stickerMode[s] ? StickersFor(s).Length : FinishesFor(s).Length;
-        var fpages     = Math.Max(1, (rightCount + Rows - 1) / Rows);
-
-        if (buttonId == "btn_mode")
-        {
-            _stickerMode[s] = !_stickerMode[s];
-
-            if (_stickerMode[s] && _gloveMode[s])
-            {
-                _gloveMode[s] = false;
                 LeaveGloveMode(slot);
             }
 
             // Knives cannot carry stickers, so entering sticker mode on one would offer 11,676
             // stickers that can never be applied. Move to the first gun instead.
-            if (_stickerMode[s] && IsKnife(_weapons[_wsel[s]]))
+            if (_mode[s] == Browse.Stickers && IsKnife(_weapons[_wsel[s]]))
             {
                 for (var i = 0; i < _weapons.Count; i++)
                 {
@@ -3049,7 +3263,29 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             return;
         }
 
-        if (_stickerMode[s] && StickerClick(slot, s, buttonId))
+        if (_mode[s] == Browse.Gloves && GloveClick(slot, s, buttonId))
+        {
+            return;
+        }
+
+        if (buttonId == "btn_listen")
+        {
+            PlayMusicPreview(slot, s);
+
+            return;
+        }
+
+        if ((_mode[s] == Browse.Pins || _mode[s] == Browse.Music)
+            && CosmeticClick(slot, s, buttonId))
+        {
+            return;
+        }
+
+        var leftCount  = LeftCount(s);
+        var rightCount = RightCount(s);
+        var fpages     = Math.Max(1, (rightCount + Rows - 1) / Rows);
+
+        if ((_mode[s] == Browse.Stickers) && StickerClick(slot, s, buttonId))
         {
             return;
         }
@@ -3094,7 +3330,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 }
 
                 // the right-hand list belongs to the left-hand pick, so it resets with it
-                if (_stickerMode[s])
+                if (_mode[s] == Browse.Stickers)
                 {
                     _csel[s]  = idx;
                     _ksel[s]  = 0;
@@ -3102,7 +3338,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 }
                 else
                 {
-                    _wsel[s]  = idx;
+                    // The column shows guns OR knives, so the row index is into that filtered
+                    // list. _wsel indexes the full catalogue, which is what everything else uses.
+                    var shown = _mode[s] == Browse.Knives ? KnifeList() : GunList();
+                    var full  = _weapons.IndexOf(shown[idx]);
+
+                    _wsel[s]  = full < 0 ? 0 : full;
                     _fsel[s]  = 0;
                     _fpage[s] = 0;
                 }
@@ -3114,14 +3355,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
             if (buttonId == "fn" + i)
             {
-                var idx = (_stickerMode[s] ? _kpage[s] : _fpage[s]) * Rows + i;
+                var idx = ((_mode[s] == Browse.Stickers) ? _kpage[s] : _fpage[s]) * Rows + i;
 
                 if (idx >= rightCount)
                 {
                     return;
                 }
 
-                if (_stickerMode[s])
+                if ((_mode[s] == Browse.Stickers))
                 {
                     _ksel[s] = idx;
                     _applied[s, _stkSlot[s]].Id = StickersFor(s)[idx].Paint;
@@ -3155,12 +3396,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         if (left)
         {
-            ref var page = ref (_stickerMode[s] ? ref _cpage[s] : ref _wpage[s]);
+            ref var page = ref ((_mode[s] == Browse.Stickers) ? ref _cpage[s] : ref _wpage[s]);
             page = ((page + delta) % pages + pages) % pages;
         }
         else
         {
-            ref var page = ref (_stickerMode[s] ? ref _kpage[s] : ref _fpage[s]);
+            ref var page = ref ((_mode[s] == Browse.Stickers) ? ref _kpage[s] : ref _fpage[s]);
             page = ((page + delta) % pages + pages) % pages;
         }
     }
@@ -3190,14 +3431,18 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         switch (buttonId)
         {
-            case "stk_xl": applied.X        = Clamp(applied.X - Step, -1f, 1f); break;
-            case "stk_xr": applied.X        = Clamp(applied.X + Step, -1f, 1f); break;
-            case "stk_yl": applied.Y        = Clamp(applied.Y - Step, -1f, 1f); break;
-            case "stk_yr": applied.Y        = Clamp(applied.Y + Step, -1f, 1f); break;
-            case "stk_rl": applied.Rotation = Wrap(applied.Rotation - Turn); break;
-            case "stk_rr": applied.Rotation = Wrap(applied.Rotation + Turn); break;
-            case "stk_sl": applied.Wear     = Clamp(applied.Wear - Grow, 0f, 1f); break;
-            case "stk_sr": applied.Wear     = Clamp(applied.Wear + Grow, 0f, 1f); break;
+            // These ids come from gen_layout.py's nudge() helper, which emits "{group}_l" and
+            // "{group}_r". The group is "stk_x", so the button is "stk_x_l" and NOT "stk_xl".
+            // They were written without the separator here, so no sticker control ever matched
+            // and the whole dock was dead while every other button worked.
+            case "stk_x_l": applied.X        = Clamp(applied.X - Step, -1f, 1f); break;
+            case "stk_x_r": applied.X        = Clamp(applied.X + Step, -1f, 1f); break;
+            case "stk_y_l": applied.Y        = Clamp(applied.Y - Step, -1f, 1f); break;
+            case "stk_y_r": applied.Y        = Clamp(applied.Y + Step, -1f, 1f); break;
+            case "stk_r_l": applied.Rotation = Wrap(applied.Rotation - Turn); break;
+            case "stk_r_r": applied.Rotation = Wrap(applied.Rotation + Turn); break;
+            case "stk_s_l": applied.Wear     = Clamp(applied.Wear - Grow, 0f, 1f); break;
+            case "stk_s_r": applied.Wear     = Clamp(applied.Wear + Grow, 0f, 1f); break;
 
             case "stk_clear":
                 applied = new Applied();
@@ -3871,6 +4116,129 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     ///     map. If it does not, the script VM is only available on maps we author, and porting the
     ///     interface to it would mean shipping our own map.
     /// </summary>
+    /// <summary>
+    ///     Can the plugin read the game's own schema files at RUNTIME?
+    ///     <br /><br />
+    ///     Today every catalogue is extracted from pak01 by a Python script at build time and
+    ///     shipped as JSON, which means a CS2 update silently leaves the catalogues stale until
+    ///     someone re-runs the tools. IFileManager goes through Valve's filesystem, so if it can
+    ///     open these the catalogues could be built on load and would never drift.
+    /// </summary>
+    /// <summary>
+    ///     Build the catalogues straight from the game and print what came out, so the runtime
+    ///     reader can be compared against the shipped JSON before anything depends on it.
+    /// </summary>
+    private ECommandAction OnCommandSchema(StringCommand command)
+    {
+        var sw  = System.Diagnostics.Stopwatch.StartNew();
+        var cat = _schema.Build();
+
+        sw.Stop();
+
+        _logger.LogInformation("schema built in {ms} ms", sw.ElapsedMilliseconds);
+
+        foreach (var w in new[] { "weapon_ak47", "weapon_awp", "weapon_bayonet" })
+        {
+            if (cat.Weapons.TryGetValue(w, out var f))
+            {
+                _logger.LogInformation("  {w}: {n} finishes, first={a}, doppler={d}",
+                                       w, f.Count, f[0].Name,
+                                       f.Count(x => x.Name.Contains("Doppler", StringComparison.Ordinal)));
+            }
+        }
+
+        foreach (var (k, g) in cat.Gloves)
+        {
+            _logger.LogInformation("  glove {k} def={d} {n} finishes '{name}'",
+                                   k, g.Def, g.Finishes.Count, g.Name);
+        }
+
+        return ECommandAction.Stopped;
+    }
+
+    private ECommandAction OnCommandFileProbe(StringCommand command)
+    {
+        foreach (var (path, id) in new[]
+                 {
+                     ("scripts/items/items_game.txt", "GAME"),
+                     ("resource/csgo_english.txt", "GAME"),
+                     ("scripts/items/items_game.txt", "MOD"),
+                 })
+        {
+            try
+            {
+                var exists = _bridge.FileManager.FileExists(path, id);
+
+                using var f = _bridge.FileManager.OpenFile(path, id);
+
+                if (f is null)
+                {
+                    _logger.LogInformation("file probe: {p} [{id}] exists={e} open=NULL", path, id, exists);
+
+                    continue;
+                }
+
+                var size = f.Size();
+                var head = "";
+
+                if (size > 0)
+                {
+                    var take = new byte[Math.Min(size, 220)];
+                    f.Read(take);
+                    head = System.Text.Encoding.UTF8.GetString(take).ReplaceLineEndings(" ");
+                }
+
+                _logger.LogInformation("file probe: {p} [{id}] exists={e} size={s} head={h}",
+                                       path, id, exists, size, head[..Math.Min(head.Length, 90)]);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("file probe: {p} [{id}] threw: {msg}", path, id, ex.Message);
+            }
+        }
+
+        foreach (var dir in new[]
+                 {
+                     "panorama/images/econ/default_generated",
+                     "panorama/images/econ/status_icons",
+                 })
+        {
+            try
+            {
+                using var d = _bridge.FileManager.OpenDirectory(dir);
+
+                if (d is null)
+                {
+                    _logger.LogInformation("dir probe: {d} -> NULL", dir);
+
+                    continue;
+                }
+
+                var n     = 0;
+                var first = "";
+                var it    = d.GetEnumerator();
+
+                while (it.MoveNext())
+                {
+                    if (n == 0)
+                    {
+                        first = it.Current;
+                    }
+
+                    n++;
+                }
+
+                _logger.LogInformation("dir probe: {d} -> {n} entries, first={f}", dir, n, first);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("dir probe: {d} threw: {msg}", dir, ex.Message);
+            }
+        }
+
+        return ECommandAction.Stopped;
+    }
+
     private ECommandAction OnCommandScriptProbe(StringCommand command)
     {
         // .vjs_c, not .js: cs_script compiles like any other resource, exactly as the layout

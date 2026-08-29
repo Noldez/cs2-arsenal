@@ -21,6 +21,7 @@
 <root>
 	<styles>
 		<include src="file://{resources}/styles/custom_game/skins.css" />
+		<include src="file://{resources}/styles/custom_game/econicons.css" />
 	</styles>
 
 	<Panel class="RootWrap">
@@ -39,6 +40,33 @@
 			<Label id="idx" class="SpineN" text="{s:v}" />
 			<Panel class="SpineRule" hittest="false" />
 			<Label class="SpineT" text="SKIN" />
+		</Panel>
+
+		<!-- Glove mode has no 3D preview: a glove is worn, and the client only resolves one when
+		     the pawn is built. This shows CS2's own econ art for the selected finish instead, which
+		     the server picks by putting a g<paintIndex> class on it. -->
+		<Panel id="econ_shot" class="EconShot Hide" hittest="false">
+			<Panel id="econ_icon" class="EconIcon" hittest="false" />
+			<!-- Panorama plays a soundevent the moment a class carrying `sound:` is applied, so
+			     toggling one of the k<id> classes here previews a music kit. -->
+			<Panel id="music_play" class="MusicPlay" hittest="false" />
+		</Panel>
+
+		<!-- OUTSIDE econ_shot on purpose: that panel is hittest="false", so a button inside it
+		     could never be clicked, and a child sitting past its edge on a negative margin gets
+		     clipped. -->
+		<!-- A transport bar rather than a lone button: the kit it belongs to is written on it, so
+		     the control and the thing it controls read as one object instead of two scattered ones. -->
+		<Panel id="deck" class="Deck Hide" hittest="false">
+			<Panel class="DeckPlate" hittest="false" />
+			<Panel class="DeckRail" hittest="false" />
+			<Panel class="DeckBody" hittest="false">
+				<Label class="DeckCap" text="NOW PLAYING" />
+				<Label id="deck_name" class="DeckName" text="{s:v}" />
+			</Panel>
+			<Button id="btn_listen" class="Listen">
+				<Label id="btn_listen_g" class="ListenGlyph" text="{s:v}" />
+			</Button>
 		</Panel>
 
 		<Panel class="Readout" hittest="false">
@@ -802,11 +830,16 @@
 		</Panel>
 
 		<Panel class="Corner" hittest="false">
-			<Button id="btn_gloves" class="Tag"><Label class="TagL" text="GLOVES" /></Button>
-			<Button id="btn_equip" class="Tag"><Label class="TagL" text="EQUIP" /></Button>
-			<Button id="btn_mode" class="Tag"><Label class="TagL" text="STICKERS" /></Button>
-			<Button id="btn_close" class="Tag"><Label class="TagL" text="ESC" /></Button>
+			<Button id="btn_weapons" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="WEAPONS" /></Button>
+			<Button id="btn_knives" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="KNIVES" /></Button>
+			<Button id="btn_gloves" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="GLOVES" /></Button>
+			<Button id="btn_pins" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="PINS" /></Button>
+			<Button id="btn_music" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="MUSIC" /></Button>
+			<Button id="btn_equip" class="Tag TagGo"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="EQUIP" /></Button>
+			<Button id="btn_close" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="ESC" /></Button>
 		</Panel>
+
+		<Label id="equipped" class="Equipped" text="{s:v}" />
 
 		<Panel class="Dock" hittest="false">
 			<Panel class="DockRule" hittest="false" />
@@ -848,10 +881,12 @@
 				<Label class="Unit" text="FV" />
 			</Panel>
 				<Panel class="VRule" hittest="false" />
-				<Button id="stk_clear" class="Tag"><Label class="TagL" text="CLR" /></Button>
+				<Button id="stk_clear" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="CLR" /></Button>
 			</Panel>
 
-			<Panel class="DockRow DockView" hittest="false">
+			<Panel id="view_row" class="DockRow DockView" hittest="false">
+				<Button id="btn_mode" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="STICKERS" /></Button>
+				<Panel class="VRule" hittest="false" />
 			<Panel class="Grp" hittest="false">
 				<Label class="Cap" text="TURN" />
 				<Button id="rot_l" class="Step"><Label class="StepL" text="&#8722;" /></Button>
@@ -877,13 +912,12 @@
 				<Label id="pany_v" class="Val" text="{s:v}" />
 				<Button id="pany_r" class="Step"><Label class="StepL" text="&#43;" /></Button>
 			</Panel>
-				<Button id="view_reset" class="Tag"><Label class="TagL" text="RESET" /></Button>
+				<Button id="view_reset" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="RESET" /></Button>
 			</Panel>
 		</Panel>
 
 		<Panel class="Brand" hittest="false">
 			<Image class="BrandImg" src="file://{images}/armory/cstema.png" />
-			<Label class="BrandT" text="ARSENAL" />
 		</Panel>
 
 	</Panel>

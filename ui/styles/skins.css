@@ -1,363 +1,1304 @@
 /* ===========================================================================
-   ARMORY / ARSENAL - CSTEMA
+   ARMORY / ARSENAL  —  CSTEMA
+   Panorama CSS (CS2), custom_hud_layout, drawn over the live 3D scene.
+   Authored against a 1080px canvas and checked against the 4:3 virtual width
+   of 1440, because that is the narrowest canvas the game hands us and there
+   is no @media to rescue it.
 
-   Panorama CSS, not web CSS:
-     * @keyframes names MUST be single-quoted or the WHOLE sheet fails to parse
-       and every panel silently never builds
-     * box-shadow puts the COLOUR FIRST:  #rrggbb x y blur spread
-     * gradient( linear, x0 y0, x1 y1, from( c ), to( c ) ) - no linear-gradient()
-     * no display/flex/grid; layout is flow-children, and a container WITHOUT it
-       overlaps its children - which is how every block here anchors itself
-     * overflow: squish scroll  is the scrolling form; `noclip` does not exist
-     * an <Image> has real pixel bounds and centres exactly; a text glyph sits on
-       its font baseline and never quite does - that is why the arrows are art
-     * every image must live in OUR content tree and be referenced as .png (the
-       compiler rewrites to _png.vtex_c). A path into Valve's pak01 compiles to
-       nothing and renders as an empty box.
+   ---------------------------------------------------------------------------
+   THE OBJECT — a machined instrument, not a menu
+   ---------------------------------------------------------------------------
+   Two racks flanking the specimen, graduated so they can be counted without
+   reading; a fascia seated on the bottom edge of the screen with the mode
+   cells cut into it; hairlines whose WEIGHT carries meaning; one lit accent
+   that means "this is the live reading". The centre is empty on purpose — a
+   real weapon entity renders back there and Panorama always draws above the
+   world.
 
-   THE MIDDLE IS EMPTY ON PURPOSE - a real weapon entity renders back there and
-   Panorama always draws above the world.
+   ---------------------------------------------------------------------------
+   THE FIVE RULES THIS SHEET IS BUILT ON — break one and it stops being a system
+   ---------------------------------------------------------------------------
+   1. HAIRLINE WEIGHT IS A VOCABULARY.
+        1px #131f2c    seam        divides equal things (row from row)
+        1px #23384e    graduation  every fifth station; machined edges
+        1px #4ade8099  datum       the fixed edge the layout hangs off
+        2px #4ade80    live        the one selected thing. Nothing else.
 
-   Look: an instrument readout, not a web form. NOTHING is a container. Structure
-   is hairline rules cut to deliberate lengths; the focused row is marked by one
-   device only - its rule runs long and turns accent. Deliberately absent, all of
-   them decoration standing in for information: filled panels, the accent bar down
-   the row edge, rivets, texture on the controls, corner ticks.
+   2. VERTICAL CUT MARKS RAKE AT -13deg. HORIZONTAL DATUMS RUN TRUE.
+      The house angle is not decoration applied to two objects — it is what a
+      cut edge looks like in this machine, so every vertical mark carries it
+      (.TagSkew, .DeckPlate, .DeckRail, .VRule, .HeadTick) and every reference
+      line stays dead level (.HeadRule, .DockRule, .SpineRule, .ReadTick, the
+      rack datums). Every raked panel in this sheet is a childless <Panel/>.
 
-   Palette is CSTEMA's own, from the site's globals.css: #4ade80 on #04080f.
+   3. GREEN MEANS LIVE.
+        full #4ade80   selected / committing / playing — state, and only state
+        dim  #4ade8099 datum edges — structure, desaturated so it cannot compete
+      The masthead kick is the single branded exception and it sits outside the
+      reading field. Ticks, rules and captions that are always-on are STEEL,
+      because a mark that is always lit says nothing.
+
+   4. TYPE TRACKING IS A FUNCTION OF SIZE, not of taste.
+        micro-caps  <=11px   0.40 x size    8->3   9->4   10->4  11->4
+        legend caps 12-22px  0.18 x size   12->2  15->3  20->4
+        display     >=24px   0.07 x size   30->2
+        monodigit readouts carry NO tracking — they are figures, not words.
+
+   5. TEXT NEVER SITS INSIDE A TRANSFORM.
+      A transform resamples every glyph in the panel, and counter-skewing the
+      label resamples it twice. Angle lives only on the text-free background
+      layers the layout provides. Reveals use `clip`, which does not resample.
+
+   ---------------------------------------------------------------------------
+   PALETTE — near-black blue ground, one green accent, Valve's seven rarities
+   ---------------------------------------------------------------------------
+     #04070c  void           screen-edge fall-off, recessed wells
+     #060c14  case interior  the plate behind the racks
+     #0a121c  plate          controls at rest
+     #131f2c  seam
+     #23384e  graduation / machined edge
+     #3a5573  lit edge (hover)
+     #62798f  engraved type  figures you scan rather than read
+     #7d8fa3  caption type
+     #aebdcc  body type
+     #e8eef4  lit type
+     #4ade80  accent — live       #a7f3c4  accent, lit
+   No @define: it is a single point of total failure for a sheet that cannot be
+   test-compiled from here, and it buys nothing this legend does not.
+
+   ---------------------------------------------------------------------------
+   ENGINE NOTES THAT HAVE ALREADY COST REAL BUGS IN THIS PROJECT
+   ---------------------------------------------------------------------------
+   * @keyframes names MUST be single-quoted at DEFINITION or the whole sheet
+     fails to parse and not one panel ever builds. At the REFERENCE both forms
+     are attested shipping in this repo (v1-2d-browser/welcome.css:195 bare,
+     v2-clans/clans.css:67 quoted); quoted is used below, matching the newer.
+   * box-shadow is COLOUR FIRST. text-shadow's 4th value is a strength FLOAT,
+     not a spread length. Both fail silently when written web-style.
+   * background-size's keyword is `contains`, not the web spelling `contain`.
+   * NO :nth-child. clan_gen.css:64 records that it does not work on this
+     engine, so every structural rule below is spelled out by id instead. A
+     rejected selector can fail the WHOLE sheet; that is not worth gambling on
+     for a tick mark.
+   * `transition-property: border` transitions a shorthand, which Panorama's
+     transition machinery does not key on. Every transition below names
+     `border-color` or a longhand.
+   * A percentage-sized child resolves against its parent's box, but a
+     fit-children parent holding a 100%-wide child is a circular size that has
+     never been proven on this engine — so every .Tag carries an EXPLICIT
+     width and .TagSkew's 100% always has something real to resolve against.
+     The entire bottom rank rides on that.
+   * A Label draws its glyphs at the TOP of its own box, and NOTHING moves them
+     down inside that box. So a label must never be given `height: 100%` in a
+     fixed-height cell: the box stretches, the glyphs stay at its top edge, and
+     `vertical-align: center` then has an already-full-height panel to centre,
+     which is a no-op. Give the label NO height, let it size to its own glyphs,
+     and centre the label itself. `.Val` is the reference: no height, padding
+     for the well, `vertical-align: center`, and it sits dead centre in both
+     the 38px dock band and the shorter pager.
+     This was got wrong once in exactly the way that looks correct on paper.
+     `line-height` WAS the centring mechanism in an earlier sheet — on a
+     height:100% label it sets the line box the single line is drawn in, so it
+     positions the glyphs by accident. A pass removed every line-height and
+     added `vertical-align: center` beside the surviving `height: 100%`,
+     reasoning that line-height was inert. The glyphs went to the top of every
+     row, tab and dock cap on screen. Deleting the height is the fix; the
+     screenshots are the authority here, not the inference. It is the idiom
+     this repo uses and none of them contains a single line-height:
+     v2-clans/clans.css:437 (.Rank, the .RowN shape), :477-486 (.Lvl/.Mem/.Tro,
+     the .RowM shape), v1-2d-browser/welcome.css:168,:174 (.RowN/.RowL).
+     The old note blamed substituted fonts (U+2212/25C0/25B6/25A0, absent from
+     Stratum2) for making vertical-align unreliable. That is fixed at source
+     now — .StepL and .ListenGlyph are collapsed and both marks are art — so
+     nothing in this sheet renders a substituted glyph any more.
+   * Stratum2 contains no U+2212 / U+25C0 / U+25B6 / U+25A0, so fontconfig was
+     substituting a different face per glyph, each with its own baseline, in a
+     20px box, twenty times over. Every one of those glyphs is collapsed and
+     drawn with the arrow art instead: an <Image> has real pixel bounds and
+     lands dead centre. That is the root-cause fix for "not centered".
    =========================================================================== */
 
-.RootWrap { width: 100%; height: 100%; }
+
+/* ===========================================================================
+   0.  ROOT
+   =========================================================================== */
+
+/* The raked plates sit outside their own layout boxes by up to 7.6px; nothing
+   in the chain above them may cut that off. */
+.RootWrap { width: 100%; height: 100%; overflow: noclip noclip; }
 
 .Root
 {
 	width: 100%; height: 100%;
+	overflow: noclip noclip;
 	opacity: 1;
-	transition-property: opacity; transition-duration: 0.16s;
 }
-.Root.Closed { opacity: 0; }
-.Root.Open   { sound: "UIPanorama.buymenu_enter"; }
 
-/* The map behind is BRIGHT and changes as the list scrolls past windows and
-   panelling, so hairline type on bare render is unreadable in places. Each column
-   gets its own scrim, plus a top and bottom fade for the header and the dock.
-   These are the only fills in the sheet and they exist to make text legible. */
-/* NO full-screen fill. Panorama always draws above the world, so a screen-wide
-   scrim dims the weapon itself - the one thing on screen that must stay bright.
-   The scrims are cut to the columns, where the text actually needs a ground. */
-.Ground { width: 100%; height: 100%; }
+/* Closed used to be opacity:0 alone, which leaves every button live and
+   clickable behind the crosshair. collapse takes it out of hit-testing. No
+   opacity transition is declared, because collapse lands on the same frame and
+   would make the declaration a lie — the fade-IN is the half that reads, and
+   it is done as an animation on .Open instead. */
+.Root.Closed { visibility: collapse; opacity: 0; }
+
+.Root.Open
+{
+	visibility: visible;
+	sound: "UIPanorama.buymenu_enter";
+	animation-name: 'caseOpen';
+	animation-duration: 0.20s;
+	animation-timing-function: ease-out;
+	animation-fill-mode: both;
+}
+
+/* Sticker mode is the one mode where the work happens at the DOCK and not in
+   the racks, so the live reading moves there and the station index steps back.
+   The server genuinely sets this class (ArsenalMenu.cs:709) and nothing has
+   ever used it. */
+.Root.Stickers .Spine { opacity: 0.38; }
+.Root.Stickers .DockRule
+{
+	background-color: gradient( linear, 0% 0%, 100% 0%,
+	                            from( #4ade8000 ), color-stop( 0.14, #4ade80ff ),
+	                            color-stop( 0.86, #4ade80ff ), to( #4ade8000 ) );
+}
+
+
+/* ===========================================================================
+   1.  GROUND — three washes, and what each one is for
+   =========================================================================== */
+
+/* Genuinely empty across the middle 44%. It weights the corners so type has
+   somewhere to sit on a blown-out map, and it never touches the weapon, which
+   is the one thing on screen that has to stay bright. */
+.Ground
+{
+	width: 100%; height: 100%;
+	background-color: gradient( radial, 50% 50%, 0% 0%, 82% 82%,
+	                            from( #04070c00 ),
+	                            color-stop( 0.44, #04070c00 ),
+	                            color-stop( 0.78, #04070c9e ),
+	                            to( #04070cd8 ) );
+}
+
 .TopFade
 {
-	width: 100%; height: 150px; vertical-align: top;
-	background-color: gradient( linear, 0% 0%, 0% 100%, from( #04080fee ), to( #04080f00 ) );
+	width: 100%; height: 190px; vertical-align: top;
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #04070ce6 ), to( #04070c00 ) );
 }
 .BotFade
 {
-	width: 100%; height: 190px; vertical-align: bottom;
-	background-color: gradient( linear, 0% 100%, 0% 0%, from( #04080ff2 ), to( #04080f00 ) );
+	width: 100%; height: 270px; vertical-align: bottom;
+	background-color: gradient( linear, 0% 100%, 0% 0%, from( #04070cf4 ), to( #04070c00 ) );
 }
-.Scrim { width: 620px; height: 100%; vertical-align: center; }
+
+/* The scrims were two 620x1080 panels painting nothing at all. They are the
+   rack walls now: a wash that dies before it reaches the centre and dies again
+   at top and bottom, so it has no cut edge anywhere. 500px, not 620px, because
+   two 620s on a 1440 canvas leave only 200px of clear glass for the weapon.
+
+   They are mirrored EXACTLY — dark outboard, gone inboard, both sides. The
+   directional weighting of the whole composition lives here and ONLY here,
+   which is why .Scroll below carries a flat ground and cannot get it wrong.
+   The previous sheet ran one gradient for both racks, so the right one shaded
+   backwards against its own scrim and the left rack read visibly heavier. */
+.Scrim
+{
+	width: 500px; height: 100%; vertical-align: center;
+	opacity-brush: gradient( linear, 0% 0%, 0% 100%,
+	                         from( #ffffff00 ), color-stop( 0.20, #ffffffff ),
+	                         color-stop( 0.82, #ffffffff ), to( #ffffff00 ) );
+}
 .ColLScrim
 {
 	horizontal-align: left;
-	/* deliberately empty: readability comes from a box behind each ROW, not from a wash
-	   down the side of the screen */
+	background-color: gradient( linear, 0% 0%, 100% 0%, from( #04070cc4 ), to( #04070c00 ) );
 }
 .ColRScrim
 {
 	horizontal-align: right;
-
+	background-color: gradient( linear, 100% 0%, 0% 0%, from( #04070cc4 ), to( #04070c00 ) );
 }
 
-/* ---------- header ---------- */
 
+/* ===========================================================================
+   2.  MASTHEAD — and the fix for the title/tab collision, at its source
+   =========================================================================== */
+
+/* The complaint was the tab row landing on the centred title. The tabs are now
+   at the bottom edge, but that alone would not have fixed it: the real fight
+   was between .Title and .SkinName, two blocks of display type both centred
+   along the top.
+   .Title only ever renders FINISH / GLOVES / PINS / MUSIC / STICKER (verified
+   against ArsenalMenu.cs:790/821/860/898). That word is already lit in the tab
+   rail and already printed in the column head. Spending the largest type on
+   screen restating it is the definition of decoration that encodes nothing.
+   So the title is demoted to a stencilled mode legend on the left datum, the
+   item name takes the display size it earned, and the collision is gone
+   because one of the two competitors no longer exists at that scale. */
 .Head
 {
 	horizontal-align: left; vertical-align: top;
-	margin-left: 46px; margin-top: 34px; flow-children: down;
+	margin-left: 26px; margin-top: 32px;
+	flow-children: down;
 }
 .Kick
 {
-	font-family: "Consolas"; font-size: 13px; letter-spacing: 7px; color: #c9f5da;
+	font-family: "Stratum2", "Arial";
+	font-size: 14px; font-weight: bold; letter-spacing: 5px;
+	color: #4ade80;
 	text-shadow: 0px 1px 4px 2.0 #000000;
 }
 .Title
 {
-	font-family: "Stratum2"; font-size: 52px; font-weight: bold; letter-spacing: 12px;
-	color: #f4f4f5; margin-top: 4px;
-	text-shadow: 0px 2px 10px 3.0 #000000;
+	font-family: "Stratum2", "Arial";
+	font-size: 26px; font-weight: black; letter-spacing: 4px;
+	color: #dbe6f0;
+	margin-top: 7px; padding-bottom: 8px;
+	white-space: nowrap;
+	/* the datum is cut to the length of the word it underlines — hairlines
+	   measured to their own content is the whole structure of this sheet */
+	border-bottom: 1px solid #4ade8099;
+	text-shadow: 0px 1px 5px 2.0 #000000;
 }
 
-/* ---------- index spine ---------- */
 
+/* ===========================================================================
+   3.  SPINE — the station number, engraved into the case
+   =========================================================================== */
+
+/* 78px digits in an 84px box were permanently squished by two pixels. At 40px
+   monodigit this measures ~48px and fits with air. It is the coarse read —
+   which station, from across the screen — where .RowN is the fine read, so it
+   is engraved rather than lit; but engraved at a value that survives a bright
+   map, which #23384e (a 4% luminance step off its own ground) did not. */
 .Spine
 {
 	horizontal-align: left; vertical-align: center;
-	margin-left: 34px; width: 84px; flow-children: down;
+	margin-left: 26px; width: 84px;
+	flow-children: down;
 }
 .SpineN
 {
-	font-family: "Stratum2"; font-size: 78px; font-weight: bold; color: #3d5170;
-	text-shadow: 0px 2px 6px 2.0 #000000;
+	font-family: "Stratum2 Bold Monodigit", "Stratum2", "Arial";
+	font-size: 40px; font-weight: bold; letter-spacing: 0px;
+	color: #4a6076;
+	white-space: nowrap;
+	text-shadow: 0px 2px 6px 2.5 #000000;
 }
-.SpineRule { width: 46px; height: 1px; background-color: #4ade80; margin-top: 8px; margin-bottom: 8px; }
+/* Steel, not accent. It is always on, and an always-on green mark devalues the
+   one colour that is supposed to mean "live". */
+.SpineRule
+{
+	width: 34px; height: 1px;
+	background-color: #3a5573;
+	margin-top: 9px; margin-bottom: 9px;
+}
 .SpineT
 {
-	font-family: "Consolas"; font-size: 10px; letter-spacing: 5px; color: #9db0c6;
+	font-family: "Stratum2", "Arial";
+	font-size: 11px; font-weight: bold; letter-spacing: 4px;
+	color: #7d8fa3;
+	text-shadow: 0px 1px 4px 2.0 #000000;
 }
 
-/* ---------- readout ---------- */
+
+/* ===========================================================================
+   4.  READOUT — the item plate, top centre
+   =========================================================================== */
 
 .Readout
 {
-	horizontal-align: center; vertical-align: top; margin-top: 30px; flow-children: down;
-}
-.SkinName
-{
-	font-family: "Stratum2"; font-size: 34px; font-weight: bold; letter-spacing: 4px;
-	color: #f4f4f5; horizontal-align: center;
-	text-shadow: 0px 2px 10px 3.0 #000000;
-}
-.ReadRow { flow-children: right; horizontal-align: center; margin-top: 6px; }
-.ReadTick { width: 44px; height: 1px; background-color: #35516f; vertical-align: center; }
-.SkinRarity
-{
-	font-family: "Consolas"; font-size: 12px; letter-spacing: 5px; color: #9db0c6;
-	margin-left: 12px; margin-right: 12px;
-}
-
-/* rarity tints: seven shared class names serve all 2017 finishes */
-.SkinRarity.R0 { color: #b0c3d9; } .SkinRarity.R1 { color: #5e98d9; }
-.SkinRarity.R2 { color: #4b69ff; } .SkinRarity.R3 { color: #8847ff; }
-.SkinRarity.R4 { color: #d32ce6; } .SkinRarity.R5 { color: #eb4b4b; }
-.SkinRarity.R6 { color: #e4ae39; }
-
-/* ---------- columns ---------- */
-
-.Col { vertical-align: center; width: 300px; flow-children: down; }
-.ColL { horizontal-align: left;  margin-left: 132px; }
-.ColR { horizontal-align: right; margin-right: 132px; }
-
-.ColHead { flow-children: right; width: 100%; margin-bottom: 12px; }
-.HeadIdx
-{
-	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6b8099;
-	vertical-align: center;
-}
-.HeadTick { width: 34px; height: 1px; background-color: #4ade80; vertical-align: center; margin-left: 10px; margin-right: 10px; }
-.Sec
-{
-	font-family: "Stratum2"; font-size: 15px; font-weight: bold; letter-spacing: 5px;
-	color: #ffffff; vertical-align: center;
-	text-shadow: 0px 2px 7px 3.0 #000000;
-}
-.HeadRule { width: 118px; height: 1px; background-color: #35516f; vertical-align: center; margin-left: 10px; margin-right: 10px; }
-.HeadN
-{
-	font-family: "Consolas"; font-size: 10px; letter-spacing: 2px; color: #93a9c0;
-	vertical-align: center;
-	text-shadow: 0px 1px 3px 2.0 #000000;
-}
-
-/* The client scrolls this natively - the server is never told about a wheel,
-   because custom_hud_layout has no scroll event at all. 72 rows are declared, so
-   weapons (55), finishes (max 60) and collections (65) fit whole. */
-.Scroll
-{
-	width: 100%; height: 578px;
-	overflow: squish scroll;
+	horizontal-align: center; vertical-align: top;
+	margin-top: 32px;
 	flow-children: down;
 }
 
-/* ---------- rows ---------- */
+/* Bounded on purpose. Music kit and collection names are unbounded strings and
+   an unbounded centred label grows in BOTH directions until it walks into the
+   columns. 480px stops 28px clear of them on a 1440 canvas. */
+.SkinName
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 30px; font-weight: black; letter-spacing: 2px;
+	color: #f2f6fa;
+	horizontal-align: center; text-align: center;
+	max-width: 480px;
+	white-space: nowrap; text-overflow: ellipsis;
+	text-shadow: 0px 2px 10px 3.0 #000000;
+}
+.ReadRow { flow-children: right; horizontal-align: center; margin-top: 11px; }
+/* A datum, so it runs true. Skewing a 1px-tall bar by 13deg displaces it by a
+   third of a pixel and buys nothing but a soft edge. */
+.ReadTick { width: 34px; height: 1px; background-color: #3a5573; vertical-align: center; }
+.SkinRarity
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 12px; font-weight: bold; letter-spacing: 2px;
+	text-transform: uppercase;
+	color: #7d8fa3; vertical-align: center;
+	margin-left: 14px; margin-right: 14px;
+	white-space: nowrap;
+	text-shadow: 0px 1px 4px 2.5 #000000;
+}
 
+/* The only place a rarity hue is allowed to touch type, because here the word
+   IS the rarity — the colour is not a second copy of the information. */
+.SkinRarity.R0 { color: #b0c3d9; }
+.SkinRarity.R1 { color: #5e98d9; }
+.SkinRarity.R2 { color: #4b69ff; }
+.SkinRarity.R3 { color: #8847ff; }
+.SkinRarity.R4 { color: #d32ce6; }
+.SkinRarity.R5 { color: #eb4b4b; }
+.SkinRarity.R6 { color: #e4ae39; }
+
+
+/* ===========================================================================
+   5.  COLUMNS
+   =========================================================================== */
+
+/* Top-aligned to a shared datum at y=180, not vertically centred. Centring two
+   fit-children columns puts their headings at different heights whenever the
+   two lists differ in length, and moves the right heading again the moment the
+   pager un-collapses. A datum line does not move. The column itself stays
+   fit-children so a seven-entry glove list does not leave 350px of empty lit
+   glass hanging under it. */
+.Col
+{
+	width: 330px;
+	vertical-align: top; margin-top: 180px;
+	flow-children: down;
+}
+.ColL { horizontal-align: left;  margin-left: 122px; }
+.ColR { horizontal-align: right; margin-right: 122px; }
+
+/* 14px of padding, matched EXACTLY to .Row's 2px reserved edge + 12px padding,
+   so IDX sits over the row numbers and the count sits over the meta column.
+   The old head was out of register with its own list on both sides.
+   noclip because .HeadTick rakes and bulges 1.4px past its own box. */
+.ColHead
+{
+	flow-children: right; width: 100%;
+	padding-left: 14px; padding-right: 14px;
+	margin-bottom: 14px;
+	overflow: noclip noclip;
+}
+.HeadIdx
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 12px; font-weight: bold; letter-spacing: 3px;
+	color: #62798f; vertical-align: center;
+	width: 34px;
+	white-space: nowrap;
+	text-shadow: 0px 1px 4px 3.0 #000000;
+}
+/* Not a decorative dash between two words. It is the same divide the rows
+   carry between their index and their label, drawn once at the head — so it
+   rakes, like every vertical cut mark in the sheet. */
+.HeadTick
+{
+	width: 1px; height: 12px; vertical-align: center;
+	background-color: #23384e;
+	transform: skewx( -13deg );
+	margin-left: 2px; margin-right: 12px;
+}
+.Sec
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 17px; font-weight: bold; letter-spacing: 3px;
+	color: #dbe6f0; vertical-align: center;
+	max-width: 176px;
+	white-space: nowrap; text-overflow: ellipsis;
+	text-shadow: 0px 2px 7px 4.0 #000000;
+}
+/* Was a fixed 118px stub, which is why nothing in the heading was ever flush
+   with anything: the head's intrinsic width came to ~459px inside a 300px
+   column and Panorama's default overflow SQUISHED it — by a different amount
+   in each column and in each of the six modes, which IS the reported
+   misalignment. Absorbing the slack here pins the count hard to the right
+   edge, every mode, both columns, and nothing is ever scaled. */
+.HeadRule
+{
+	width: fill-parent-flow( 1.0 ); min-width: 14px; height: 1px;
+	background-color: #23384e; vertical-align: center;
+	margin-left: 12px; margin-right: 12px;
+}
+.HeadN
+{
+	font-family: "Stratum2 Regular Monodigit", "Stratum2", "Arial";
+	font-size: 14px; letter-spacing: 0px;
+	color: #8fa2b6; vertical-align: center;
+	white-space: nowrap;
+	text-shadow: 0px 1px 4px 2.5 #000000;
+}
+
+/* ---------------------------------------------------------------------------
+   The rack face.
+
+   The old sheet stacked three grounds here — a world-blur, a gradient over it,
+   and a near-opaque fill on every row over that — so the blur and the gradient
+   were only ever visible in the 1px gaps between rows and the net result was a
+   flat slab. There is ONE ground now: this plate. Rows are transparent until
+   hovered or selected, which is what lets the frosted world actually show
+   through and is the whole reason the blur is here.
+
+   The plate is a FLAT wash, not a gradient. The two racks are a mirrored pair
+   and the mirroring is carried entirely by .Scrim behind them; a directional
+   gradient here as well is a second chance to get the mirror wrong, and the
+   previous sheet took it. Flat also means the dimmest type in the interface
+   sits on a constant ground rather than on whichever end of a fade it landed.
+
+   grid.png is a survey-tick field, not a sci-fi grid. At 9% it reads as
+   graduation engraved into the plate, and it is the same surface finish used
+   on the dock bands and the deck — which is what ties the three
+   apart-on-screen assemblies into one instrument.
+
+   The cap is a whole number of rows, never a round number: a fraction of a row
+   at the bottom edge is sliced mid-glyph by `overflow: scroll`. At the 34px row
+   this sheet now uses, 578px is 17 whole rows, and the right column's pager
+   lands ~41px clear of the dock's tallest state (sticker mode, top edge y=890).
+   18 rows (612px) leaves 7px, 19 (646px) lands INSIDE the dock — hence 17.
+   --------------------------------------------------------------------------- */
+.Scroll
+{
+	width: 100%;
+	height: fit-children; max-height: 578px;
+	overflow: squish scroll;
+	flow-children: down;
+	world-blur: gaussian( 2.6 );
+	background-color: #060c14ac;
+	background-image: url( "file://{images}/armory/grid.png" );
+	background-size: 507px 345px;
+	background-repeat: repeat;
+	background-img-opacity: 0.09;
+	box-shadow: #00000080 0px 10px 30px 0px;
+}
+
+/* The datum: each rack hangs off its own OUTBOARD edge, and both scrolls carry
+   a border on both sides — one lit, one fully transparent — so the two columns
+   stay in identical horizontal register down to the pixel. */
+.ColL .Scroll { border-left:  1px solid #4ade8099; border-right: 1px solid #00000000; }
+.ColR .Scroll { border-right: 1px solid #4ade8099; border-left:  1px solid #00000000; }
+
+
+/* ===========================================================================
+   6.  ROWS — the graduated scale
+   =========================================================================== */
+
+/* Both side borders are reserved here at zero alpha and never change WIDTH
+   again. Every state below recolours them. Changing a border width on hover or
+   on selection would shove the row's whole contents sideways by two pixels the
+   moment the server tagged the list. */
 .Row
 {
-	width: 100%; height: 34px; flow-children: right;
+	width: 100%; height: 34px;
+	flow-children: right;
 	padding-left: 12px; padding-right: 12px;
-	border-bottom: 1px solid #16283c;
-	transition-property: background-color; transition-duration: 0.09s;
+	border-left:   2px solid #00000000;
+	border-right:  2px solid #00000000;
+	border-bottom: 1px solid #131f2c;
+	transition-property: background-color, border-left-color, border-right-color;
+	transition-duration: 0.08s;
+	transition-timing-function: ease-out;
 }
-/* every row carries its OWN box - that is where the legibility comes from now, so the
-   world stays visible either side of the lists instead of sitting behind a wash */
-.Row       { background-color: #04080fe0; }
-.Row:hover { background-color: #0f1c2be0; }
-.Row.Hide  { visibility: collapse; }
 
-/* the ONE mark of focus: the row's own rule runs long and turns accent */
-.Row.On { border-bottom: 1px solid #4ade80; }
+/* THE RULER. Every fifth station gets the heavier graduation, so a list can be
+   counted off in fives without reading a single number — and 72 rows stop
+   reading as 72 identical cards. Spelled out by id rather than :nth-child(5n)
+   because this engine has no :nth-child (clan_gen.css:64 records the lesson)
+   and a rejected selector can take the whole sheet down with it. Hidden rows
+   are always the trailing ones (ArsenalMenu.cs:953), so the graduation never
+   lands on a gap. border-bottom-COLOR only: the width is the base rule's. */
+#wp4, #wp9, #wp14, #wp19, #wp24, #wp29, #wp34, #wp39, #wp44, #wp49, #wp54, #wp59, #wp64, #wp69,
+#fn4, #fn9, #fn14, #fn19, #fn24, #fn29, #fn34, #fn39, #fn44, #fn49, #fn54, #fn59, #fn64, #fn69
+	{ border-bottom-color: #23384e; }
 
-.RowN
+/* Rarity is a 2px grade mark in a fixed gutter on the row's OUTBOARD edge, not
+   the colour of the name: seven saturated Valve hues running through the thing
+   you are actually reading puts seven competing signals into the primary type.
+   Mirrored per column, so the grade always sits against the screen edge and
+   selection always points inboard at the weapon. Colour only — never the
+   shorthand, which would rewrite the width the base rule reserved. */
+#list_l .Row.R0 { border-left-color: #b0c3d9; }
+#list_l .Row.R1 { border-left-color: #5e98d9; }
+#list_l .Row.R2 { border-left-color: #4b69ff; }
+#list_l .Row.R3 { border-left-color: #8847ff; }
+#list_l .Row.R4 { border-left-color: #d32ce6; }
+#list_l .Row.R5 { border-left-color: #eb4b4b; }
+#list_l .Row.R6 { border-left-color: #e4ae39; }
+
+#list_r .Row.R0 { border-right-color: #b0c3d9; }
+#list_r .Row.R1 { border-right-color: #5e98d9; }
+#list_r .Row.R2 { border-right-color: #4b69ff; }
+#list_r .Row.R3 { border-right-color: #8847ff; }
+#list_r .Row.R4 { border-right-color: #d32ce6; }
+#list_r .Row.R5 { border-right-color: #eb4b4b; }
+#list_r .Row.R6 { border-right-color: #e4ae39; }
+
+.Row:hover { background-color: #0e1b28a8; }
+.Row:hover .RowL { color: #e8eef4; }
+.Row:hover .RowN { color: #8fa2b6; }
+.Row:hover .RowM { color: #aebdcc; }
+
+/* Selection is ONE device: the blade on the edge FACING THE WEAPON lights, and
+   the row is washed from that edge inward. Mirrored, so the mark on either
+   side always points at the thing it is feeding. Declared after :hover and
+   scoped by list id (1,2,0), so a selected row keeps reading as selected while
+   the cursor is over it and can never tie with the rarity rules. */
+#list_l .Row.On
 {
-	font-family: "Consolas"; font-size: 9px; color: #6b8099;
-	width: 20px; vertical-align: center;
+	background-color: gradient( linear, 100% 0%, 0% 0%,
+	                            from( #123a26d8 ), color-stop( 0.55, #0c2418a0 ), to( #06121000 ) );
+	border-right-color: #4ade80;
+	box-shadow: inset #4ade8047 -4px 0px 12px 0px;
+}
+#list_r .Row.On
+{
+	background-color: gradient( linear, 0% 0%, 100% 0%,
+	                            from( #123a26d8 ), color-stop( 0.55, #0c2418a0 ), to( #06121000 ) );
+	border-left-color: #4ade80;
+	box-shadow: inset #4ade8047 4px 0px 12px 0px;
 }
 .Row.On .RowN { color: #4ade80; }
+.Row.On .RowL { color: #ffffff; }
+.Row.On .RowM { color: #a7f3c4; }
 
+.Row:active { background-color: #04070ccc; }
+
+/* 34px wide, not 30: the sticker capsules run to 1404 entries and a four-digit
+   index at 12px monodigit measures ~29px before it starts clipping. This label
+   carries no nowrap, so an index that outgrows its box wraps to a second line
+   inside a fixed-height row. .HeadIdx carries the same width, or IDX stops
+   sitting over the numbers.
+
+   RIGHT-aligned, and the only reason to pay for a monodigit face: the figures
+   are tabular, so units sit under units and the column has a constant right
+   edge instead of a ragged one swinging 18px between "1" and "1404". The 14px
+   right margin then puts .RowL at x=63, flush under .Sec — the head and the
+   rows were 14px out of register with each other — and opens the gutter
+   .HeadTick has always claimed to be drawing once at the head. */
+.RowN
+{
+	font-family: "Stratum2 Regular Monodigit", "Stratum2", "Arial";
+	font-size: 12px; letter-spacing: 0px;
+	color: #62798f;
+	width: 34px;
+	text-align: right; vertical-align: center;
+	margin-right: 14px;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
 .RowL
 {
-	font-family: "Stratum2"; font-size: 13px; font-weight: bold; letter-spacing: 3px;
-	color: #b8c6d6; vertical-align: center;
+	font-family: "Stratum2", "Arial";
+	font-size: 15px; font-weight: bold; letter-spacing: 3px;
+	color: #aebdcc;
+	width: fill-parent-flow( 1.0 ); vertical-align: center;
+	white-space: nowrap; text-overflow: ellipsis;
 	text-shadow: 0px 1px 3px 2.0 #000000;
 }
-.Row.On .RowL { color: #f4f4f5; }
-
+/* Bounded and clipped for the same reason .RowL is: without nowrap a long meta
+   string wraps inside a 34px fixed-height row and spills out the bottom of it.
+   Lifted two steps off #5f7488 — at 9px over a world-blurred ground it landed
+   near 2.6:1 on a sunlit Mirage wall, and it is one of only two things in the
+   list carrying information rather than restating it. */
 .RowM
 {
-	font-family: "Consolas"; font-size: 10px; color: #93a9c0;
-	horizontal-align: right; vertical-align: center;
+	font-family: "Stratum2 Regular Monodigit", "Stratum2", "Arial";
+	font-size: 12px; letter-spacing: 0px;
+	color: #7d8fa3;
+	max-width: 88px; margin-left: 10px;
+	vertical-align: center; text-align: right;
+	white-space: nowrap; text-overflow: ellipsis;
 	text-shadow: 0px 1px 3px 2.0 #000000;
 }
-.Row.On .RowM { color: #d6e2ee; }
 
-/* finish rows carry the rarity of the skin they name */
-.Row.R0 .RowL { color: #b0c3d9; } .Row.R1 .RowL { color: #5e98d9; }
-.Row.R2 .RowL { color: #4b69ff; } .Row.R3 .RowL { color: #8847ff; }
-.Row.R4 .RowL { color: #d32ce6; } .Row.R5 .RowL { color: #eb4b4b; }
-.Row.R6 .RowL { color: #e4ae39; }
-.Row.On.R0 .RowL, .Row.On.R1 .RowL, .Row.On.R2 .RowL, .Row.On.R3 .RowL,
-.Row.On.R4 .RowL, .Row.On.R5 .RowL, .Row.On.R6 .RowL { color: #f4f4f5; }
 
-/* ---------- pager: sticker list only ----------
-   Every other list fits in the declared rows and scrolls, so it has none. The
-   server adds Hide when the collection fits. */
-.Pager { flow-children: right; horizontal-align: center; margin-top: 12px; }
-.Pager.Hide { visibility: collapse; }
+/* ===========================================================================
+   7.  PAGER — the sticker capsule list, and nothing else
+   =========================================================================== */
 
-/* ---------- dock ---------- */
+.Pager { flow-children: right; horizontal-align: center; margin-top: 14px; }
+.Pager .Val { min-width: 66px; }
 
+
+/* ===========================================================================
+   8.  DOCK
+   =========================================================================== */
+
+/* fit-children, deliberately. The old dock was a hard 1000px box holding a
+   sticker band that measures ~972px and a view band that measures ~917px, both
+   left-aligned inside it: the box was centred on screen and the controls were
+   not, and any growth in a caption or a unit would tip the band past the
+   ceiling — at which point Panorama's default `squish` scales the entire band
+   and every glyph in it, which is precisely the "blurry" and "not aligned"
+   complaint, at the dock, in the mode where the dock IS the interface.
+   With no fixed width there is no ceiling to cross. Both bands size to their
+   own content and centre themselves, so neither can be ragged against the
+   other and neither can ever be scaled. */
 .Dock
 {
 	horizontal-align: center; vertical-align: bottom;
-	margin-bottom: 44px; width: 1060px; flow-children: down;
+	margin-bottom: 84px;
+	width: fit-children;
+	flow-children: down;
 }
-.DockRule { width: 100%; height: 1px; background-color: #35516f; }
+
+/* A datum, cut to length and brightest at its centre: a hairline that has been
+   cut, not a slab edge that has been stopped. 760px rather than full width,
+   because a 1000px rule reads as a horizon line drawn across the game. It is
+   also the one mark that changes in sticker mode (see .Root.Stickers). */
+.DockRule
+{
+	width: 760px; height: 1px; horizontal-align: center;
+	background-color: gradient( linear, 0% 0%, 100% 0%,
+	                            from( #4ade8000 ), color-stop( 0.18, #4ade80b0 ),
+	                            color-stop( 0.82, #4ade80b0 ), to( #4ade8000 ) );
+}
+
+/* Top and bottom hairlines only, no sides: a band across the instrument face
+   rather than a card sitting on top of it.
+
+   overflow CLIPS here, and it has to, because this is the one painted panel in
+   the sheet carrying a TILED ground. Panorama draws a repeat as whole tiles
+   anchored at the panel's own top-left, and the only thing that trims the last
+   tile back to the panel edge is the panel's clip rect — `overflow` governs a
+   panel's own paint, not just its children. On a 38px band a 345px tile hangs
+   307px below it, and .Dock stands only 84px off the screen edge, so `noclip`
+   here flooded the entire bottom strip with plus marks: over the mode rail
+   (.Corner is declared before .Dock, so this paints on top of it) and over bare
+   game world. A tiled ground and `noclip` cannot share a panel.
+
+   Nothing is lost by clipping. skewx displaces horizontally only, by
+   (y - centre) * tan 13deg — 3.23px at the dock .Tags' 28px, 2.31px at .VRule's
+   20px, nothing vertically — and the first and last child of every row sit 18px
+   in on this panel's padding, so the bulge was always inside the box. The one
+   thing it WOULD cut is a bloom: see .DockRow .Tag.On below.
+
+   `clip`, not the `squish` default: squish SCALES a band that overruns and every
+   glyph in it, which is what "blurry" and "not aligned" were at the dock. */
 .DockRow
 {
-	flow-children: right; width: 100%; margin-top: 14px;
-	background-color: #04080fe0;
-	padding: 6px 10px 6px 10px;
+	flow-children: right;
+	width: fit-children; horizontal-align: center;
+	height: 38px;
+	margin-top: 16px;
+	padding-left: 18px; padding-right: 18px;
+	overflow: clip clip;
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #0a121ce8 ), to( #060c14ee ) );
+	background-image: url( "file://{images}/armory/grid.png" );
+	background-size: 507px 345px;
+	background-repeat: repeat;
+	background-img-opacity: 0.08;
+	border-top: 1px solid #23384e;
+	border-bottom: 1px solid #04070c;
 }
-.DockRow.Hide { visibility: collapse; }
 .DockView { margin-top: 12px; }
 
-.VRule { width: 1px; height: 22px; background-color: #0f1a29; margin-left: 14px; margin-right: 14px; vertical-align: center; }
+/* Every divider rakes at the house angle. It is one pixel of paint and it is
+   the cheapest sentence in the sheet that says this is all one machine. */
+.VRule
+{
+	width: 1px; height: 20px; vertical-align: center;
+	background-color: #23384e;
+	transform: skewx( -13deg );
+	margin-left: 14px; margin-right: 14px;
+}
+
+.Grp { flow-children: right; height: 100%; margin-right: 12px; }
 
 .Cap
 {
-	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6b8099;
-	vertical-align: center; margin-right: 9px;
+	font-family: "Stratum2", "Arial";
+	font-size: 11px; font-weight: bold; letter-spacing: 4px;
+	color: #7d8fa3;
+	vertical-align: center; margin-right: 8px;
+	white-space: nowrap;
+	text-shadow: 0px 1px 3px 2.0 #000000;
 }
-.Unit
-{
-	font-family: "Consolas"; font-size: 8px; color: #2f3d4e;
-	vertical-align: center; margin-left: 5px;
-}
-.Grp { flow-children: right; margin-right: 14px; }
+
+/* A machined window: recessed well, lit numeral, a graduation cut under it.
+   Monodigit and min-width'd, because these count up and down while a step
+   button is held and a proportional figure set makes the whole group breathe
+   sideways as the digits change. Sized by PADDING rather than a fixed height,
+   which is what centres the glyphs without a line-height guess — and it is why
+   the same rule works in the 38px dock band and in the shorter pager. */
 .Val
 {
-	font-family: "Consolas"; font-size: 12px; color: #dfe7f0;
-	width: 54px; text-align: center; vertical-align: center;
+	font-family: "Stratum2 Bold Monodigit", "Stratum2", "Arial";
+	font-size: 14px; font-weight: bold; letter-spacing: 0px;
+	color: #e8eef4; vertical-align: center;
+	min-width: 52px; text-align: center;
+	padding-top: 4px; padding-bottom: 4px; padding-left: 9px; padding-right: 9px;
+	background-color: #04070c99;
+	border-bottom: 1px solid #23384e;
+	white-space: nowrap;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
+/* The one label in the dock that had no text-shadow at all, at 8px, at the
+   bottom of the screen where .BotFade has already thinned out. It was
+   effectively invisible on Vertigo. */
+.Unit
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 10px; letter-spacing: 4px;
+	color: #62798f;
+	vertical-align: center; margin-left: 6px; margin-right: 4px;
+	white-space: nowrap;
+	text-shadow: 0px 1px 3px 2.0 #000000;
 }
 
+/* ---------------------------------------------------------------------------
+   Steppers — and the arrows say which axis they move.
+
+   Every one of these carried a text glyph: U+2212, U+25C0, U+25B6, '+'.
+   Stratum2 contains none of the first three, so fontconfig substituted a
+   different face per glyph with a different baseline and a different optical
+   weight, and they landed off-centre in a 20px box, twenty times over. That is
+   the bulk of "the text is not aligned" and "not centered", and no line-height
+   fixes it, because the substituted box is the wrong height in the first place.
+
+   The labels are collapsed and the direction is drawn with art. arrow_up.png
+   and arrow_down.png were shipped and never used: the two VERTICAL axes
+   (sticker Y, MOVE Y) get vertical arrows now, so the control states its own
+   axis instead of being one more identical +/- pair. Every draw size holds the
+   source aspect exactly (30x50 -> 12x20, 50x30 -> 15x9).
+   --------------------------------------------------------------------------- */
 .Step
 {
-	width: 18px; height: 18px; vertical-align: center;
-	border: 1px solid #1b2a41;
-	transition-property: border; transition-duration: 0.09s;
+	width: 20px; height: 20px; vertical-align: center;
+	background-color: #0a121ce6;
+	border: 1px solid #23384e;
+	background-position: 50% 50%;
+	background-repeat: no-repeat;
+	background-img-opacity: 0.55;
+	transition-property: border-color, background-color, background-img-opacity;
+	transition-duration: 0.08s;
+	transition-timing-function: ease-out;
 }
-.Step:hover { border: 1px solid #4ade80; }
-.StepL
+#stk_x_l, #stk_r_l, #stk_s_l, #rot_l, #zoom_l, #panx_l, #fn_prev
 {
-	font-family: "Consolas"; font-size: 11px; color: #6d8199;
-	horizontal-align: center; vertical-align: center;
+	background-image: url( "file://{images}/armory/arrow_left.png" );
+	background-size: 12px 20px;
 }
-.Step:hover .StepL { color: #e8eef5; }
+#stk_x_r, #stk_r_r, #stk_s_r, #rot_r, #zoom_r, #panx_r, #fn_next
+{
+	background-image: url( "file://{images}/armory/arrow_right.png" );
+	background-size: 12px 20px;
+}
+#stk_y_l, #pany_l
+{
+	background-image: url( "file://{images}/armory/arrow_down.png" );
+	background-size: 15px 9px;
+}
+#stk_y_r, #pany_r
+{
+	background-image: url( "file://{images}/armory/arrow_up.png" );
+	background-size: 15px 9px;
+}
 
+.Step:hover  { border-color: #4ade80; background-color: #10251be6; background-img-opacity: 1.0; }
+.Step:active { background-color: #04070c; box-shadow: inset #00000099 0px 2px 4px 0px; }
+
+.StepL { visibility: collapse; }
+
+/* ---------------------------------------------------------------------------
+   Sticker slots.
+
+   The states used to be declared twice in two places at equal specificity, so
+   .Has won on source order over .On — and the server sets BOTH on the selected
+   slot whenever that slot already holds a sticker (ArsenalMenu.cs:927-928),
+   which is the normal case. The green selection mark vanished exactly when it
+   mattered. Declared once here in deliberate order, with every combination
+   given its own rule, so nothing is ever decided by a tie again.
+
+   Occupancy is carried by the FILL and selection by the EDGE, and no state
+   anywhere changes a border WIDTH — a 3px occupied underline drops the digit
+   one pixel and gives the row of five two different baselines, which is
+   literally "the text is not aligned in those boxes", on five boxes at once.
+     bare      empty slot
+     .Has      loaded — the plate fills
+     .On       being edited — the edge lights
+     .On.Has   both
+   --------------------------------------------------------------------------- */
 .Chip
 {
-	width: 22px; height: 22px; margin-right: 6px; vertical-align: center;
-	border: 1px solid #1b2a41;
-	transition-property: border; transition-duration: 0.09s;
+	width: 26px; height: 26px; margin-right: 6px; vertical-align: center;
+	background-color: #04070c99;
+	border: 1px solid #23384e;
+	transition-property: border-color, background-color; transition-duration: 0.08s;
+	transition-timing-function: ease-out;
 }
-.Chip:hover  { border: 1px solid #4ade80; }
-.Chip.On     { border: 1px solid #4ade80; }
-.Chip.Has    { border: 1px solid #6d5a38; }
+.Chip.Has           { background-color: #16212eee; border-color: #3a5573; }
+.Chip.Has .ChipL    { color: #aebdcc; }
+.Chip:hover         { border-color: #7d8fa3; }
+.Chip.Has:hover     { border-color: #8fa2b6; }
+.Chip.On            { background-color: #10251b; border-color: #4ade80; }
+.Chip.On .ChipL     { color: #4ade80; }
+.Chip.On.Has        { background-color: #16412a; }
+.Chip.On.Has .ChipL { color: #d8ffe8; }
+/* Written last so the chip the cursor is actually on is never the one chip in
+   the row that stops responding. */
+.Chip.On:hover      { border-color: #a7f3c4; }
+.Chip:active        { box-shadow: inset #00000099 0px 2px 4px 0px; }
 .ChipL
 {
-	font-family: "Consolas"; font-size: 10px; color: #6d8199;
-	horizontal-align: center; vertical-align: center;
+	font-family: "Stratum2 Bold Monodigit", "Stratum2", "Arial";
+	font-size: 13px; font-weight: bold; letter-spacing: 0px;
+	color: #62798f;
+	width: 100%; text-align: center; vertical-align: center;
 }
-.Chip.On .ChipL { color: #ffffff; }
 
-/* ---------- corner tags ---------- */
 
+/* ===========================================================================
+   9.  FASCIA — the mode rail, seated on the bottom edge of the screen
+   =========================================================================== */
+
+/* "i think categories could go at the bottom, somehow?" — and further than
+   bottom: the rail is seated ON the screen edge, so it reads as the top of a
+   console the player is standing at rather than a strip floating above one.
+   Nothing else lives along that edge, and the masthead has been taken out of
+   contention (section 2), so there is nothing left for it to collide with at
+   any string length.
+
+   The plinth behind it is a horizontal wash that dies at both ends, so the
+   assembly has no hard cut ends to look boxy with — and NO world-blur, because
+   .TagL is 10px type and a frosted game behind type that small is mud. The
+   machined top edge of the rail is not this panel's border: it is the raked
+   top edge of every cell, so the rail reads as CUT rather than as a bar with
+   things drawn on it.
+
+   Every cell is sized to its own word — WEAPONS is wider than PINS because the
+   word is — which is the direct answer to evenly-spaced identical cards. The
+   five mode cells butt with no gap at all: sheared plates sharing an edge read
+   as one banked rail cut by diagonal seams, which is a rack selector. EQUIP
+   and ESC stand clear of it because they are not modes; one commits and one
+   leaves. The assembly as a whole is centred, and .DockRule above it is
+   centred on the same axis.
+
+   The plinth runs 60px PAST the rail at each end and reaches full value inside
+   that overhang. A fit-children band ends exactly where its first and last cell
+   do, and then fades its own outer tenth to nothing UNDER them: WEAPONS stood
+   on a ground that was still ramping in for 61% of its width and ESC stood
+   entirely inside the fade-out, with the -13deg rake throwing both outboard
+   corners 4.2px past the band on top of that. .DockRow carries the same
+   padding for the same reason. */
 .Corner
 {
-	horizontal-align: right; vertical-align: top;
-	margin-top: 34px; margin-right: 46px; flow-children: right-wrap;
+	horizontal-align: center; vertical-align: bottom;
+	margin-bottom: 0px;
+	height: 52px;
+	flow-children: right;
+	padding-left: 60px; padding-right: 60px;
+	overflow: noclip noclip;
+	background-color: gradient( linear, 0% 0%, 100% 0%,
+	                            from( #060c1400 ),
+	                            color-stop( 0.06, #060c14ee ),
+	                            color-stop( 0.94, #060c14ee ),
+	                            to( #060c1400 ) );
 }
+
+/* Geometry, and nothing else. No transform, no background, no border — those
+   belong to .TagSkew, which holds no text. The horizontal padding lives on
+   .TagL rather than here, because a percentage-sized child resolves against
+   its parent's box and padding here would pull the plate in off its own edges.
+   The width is EXPLICIT on every tag below: a fit-children parent holding a
+   100%-wide child is a circular size this engine has never been asked to
+   resolve in this project, and the entire bottom rank rides on it. */
 .Tag
 {
-	height: 22px; margin-left: 8px; vertical-align: center;
-	padding-left: 12px; padding-right: 12px;
-	background-color: #04080fe0;
-	border: 1px solid #1b2a41;
-	transition-property: border; transition-duration: 0.09s;
+	height: 36px; vertical-align: center;
+	overflow: noclip noclip;
 }
-.Tag:hover { border: 1px solid #4ade80; }
-.Tag.On    { border: 1px solid #4ade80; }
+
+/* The sheared plate. A -13deg skew on a 36px box throws each corner +/-4.2px
+   sideways AFTER layout has run. That is only safe because every cell in the
+   rail is the same height and on the same vertical centre: skewx displaces
+   every point by (y - centre) * tan, so identical boxes shear identically,
+   parallel edges stay parallel, and the seams stay exactly the width they were
+   authored at. Give one cell a different height and the rail starts wedging.
+
+   All four borders are declared here as one shorthand, and every state rule
+   below changes border-COLOR only. The previous sheet closed the rail's ends
+   with an id rule carrying `border-right: 1px solid #23384e` — (1,1,0), which
+   outranks every state selector — so EQUIP drew three green edges and one grey
+   one permanently, and so did MUSIC and STICKERS whenever selected. Closing
+   every cell on both sides costs a 2px seam between butted cells, which on a
+   machined rail is exactly what two cut edges meeting looks like, and it
+   removes the specificity conflict entirely. */
+.TagSkew
+{
+	width: 100%; height: 100%;
+	transform: skewx( -13deg );
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #16212ef2 ), to( #080f18f2 ) );
+	border: 1px solid #23384e;
+	transition-property: background-color, border-color; transition-duration: 0.08s;
+	transition-timing-function: ease-out;
+}
 .TagL
 {
-	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6d8199;
+	font-family: "Stratum2", "Arial";
+	font-size: 13px; font-weight: bold; letter-spacing: 2px;
+	color: #8fa2b6;
+	width: 100%; text-align: center; vertical-align: center;
+	white-space: nowrap;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+	transition-property: color; transition-duration: 0.08s;
+}
+
+/* Cut to the word. 13px Stratum2 bold on 2px tracking runs ~11px per glyph —
+   the same measure the old 10px/4px setting produced, which is why not one
+   width below moves. These are those measures plus a ~20px lead-in each side,
+   which is also what the shear needs so a label never crowds its own raked
+   edge. Take a size out of the 0.18x legend band and every width here is wrong. */
+#btn_weapons { width: 118px; }
+#btn_knives  { width: 106px; }
+#btn_gloves  { width: 106px; }
+#btn_pins    { width:  84px; }
+#btn_music   { width:  96px; }
+#btn_equip   { width: 104px; margin-left: 20px; }
+#btn_close   { width:  70px; margin-left: 20px; }
+
+.Tag:hover .TagSkew
+{
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #22313fee ), to( #101a26ee ) );
+	border-color: #3a5573;
+}
+.Tag:hover .TagL { color: #e8eef4; }
+
+/* The lit cell. One device: the seam turns accent and the well fills. */
+.Tag.On .TagSkew
+{
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #16412a ), to( #08190f ) );
+	border-color: #4ade80;
+}
+.Tag.On .TagL { color: #a7f3c4; }
+
+/* The border is already full #4ade80, so alpha cannot help it: skewx resamples
+   the two RAKED edges across a sheared footprint and each pixel column of them
+   receives roughly half the border's coverage, so the lit cell outlines at full
+   weight on the two edges that read as a plain box and at half weight on the two
+   cut edges that carry the whole idea. The fix is luminous area OUTSIDE the
+   border — not border WIDTH, which every .TagSkew state rule is forbidden to
+   touch. The shadow is painted as part of .TagSkew's own render, so the transform
+   applies to the composite and the bloom SHEARS WITH THE PLATE instead of drawing
+   an upright rectangle behind a raked shape.
+   Scoped to .Corner because #btn_mode is also a .Tag.On, and .DockRow now CLIPS
+   (a tiled ground and noclip cannot share a panel) — a 10px bloom on a 28px plate
+   in a 38px band would be sliced flat 5px above and below and read as a hard
+   green edge on the band. The dock's lit toggle keeps the plate treatment only. */
+.Corner .Tag.On .TagSkew { box-shadow: #4ade8059 0px 0px 10px 0px; }
+
+.Tag:active .TagSkew { box-shadow: inset #00000099 0px 2px 6px 0px; }
+/* (0,5,0), so a press still reads as a press on a cell that is already lit —
+   the bloom above is (0,4,0) and would otherwise outrank .Tag:active. */
+.Corner .Tag.On:active .TagSkew { box-shadow: inset #00000099 0px 2px 6px 0px; }
+
+/* EQUIP is the only control that changes the player's loadout, so it stands
+   off the rail and carries the accent outright. Only #btn_equip has .TagGo. */
+.TagGo .TagSkew
+{
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #10251b ), to( #061109 ) );
+	border-color: #4ade80;
+	box-shadow: #4ade8059 0px 0px 10px 0px;
+}
+.TagGo .TagL { color: #4ade80; }
+.TagGo:hover:active .TagSkew { box-shadow: inset #00000099 0px 2px 6px 0px; }
+.TagGo:hover .TagSkew
+{
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #4ade80 ), to( #2f9e5a ) );
+	border-color: #a7f3c4;
+	box-shadow: #a7f3c47a 0px 0px 14px 0px;
+}
+.TagGo:hover .TagL { color: #04070c; }
+
+/* ESC leaves. A ghost: hairline, barely filled, quiet type. It has to be
+   findable and it must never be the thing the eye lands on first. */
+#btn_close .TagSkew       { background-color: #04070c8c; border-color: #131f2c; }
+#btn_close .TagL          { color: #62798f; }
+#btn_close:hover .TagSkew { background-color: #16212eee; border-color: #7d8fa3; }
+#btn_close:hover .TagL    { color: #e8eef4; }
+
+/* The three tags that live inside the dock are controls, not modes: same
+   plate, same rake, brought down to the dock's scale. */
+.DockRow .Tag  { height: 28px; }
+.DockRow .TagL { font-size: 11px; letter-spacing: 4px; }
+#btn_mode      { width: 108px; margin-right: 4px; }
+#stk_clear     { width:  60px; }
+#view_reset    { width:  78px; margin-left: 12px; }
+
+
+/* ===========================================================================
+   10.  EQUIP CONFIRMATION
+   =========================================================================== */
+
+/* Was drawn at 168px, which put it INSIDE the dock band — and #equipped is
+   declared BEFORE .Dock in the layout, so the dock's opaque fill painted over
+   the bottom twenty pixels of it in sticker mode, the mode where a
+   confirmation matters most. Lifted clear and given a z-index so a later
+   change to the dock's height cannot quietly bury it again.
+
+   Not a toast. A four-sided bordered rectangle with a thickened left edge is
+   the single most generic object in any interface; this is a stamp — one
+   accent blade and a fill that dies out to the right — and it wipes in with
+   `clip`, which reveals without resampling a single glyph. */
+.Equipped
+{
+	horizontal-align: center; vertical-align: bottom;
+	margin-bottom: 212px;
+	z-index: 40;
+	font-family: "Stratum2", "Arial";
+	font-size: 13px; font-weight: bold; letter-spacing: 2px;
+	color: #a7f3c4;
+	max-width: 560px;
+	white-space: nowrap; text-overflow: ellipsis;
+	padding-top: 9px; padding-bottom: 9px; padding-left: 18px; padding-right: 32px;
+	background-color: gradient( linear, 0% 0%, 100% 0%,
+	                            from( #0c2a1af2 ), color-stop( 0.6, #071710d4 ), to( #04070c00 ) );
+	border-left: 3px solid #4ade80;
+	text-shadow: 0px 1px 4px 2.0 #000000;
+	opacity: 0;
+	clip: rect( 0%, 0%, 100%, 0% );
+	transition-property: opacity, clip;
+	transition-duration: 0.10s, 0.22s;
+	transition-timing-function: ease-out;
+}
+.Equipped.Show { opacity: 1; clip: rect( 0%, 100%, 100%, 0% ); }
+
+
+/* ===========================================================================
+   11.  ECON PREVIEW — gloves, pins, music
+   =========================================================================== */
+
+/* Stands exactly where the weapon renders in the other modes, so the eye never
+   has to move between modes. 480x340 clears both columns by 28px at 4:3. */
+.EconShot
+{
 	horizontal-align: center; vertical-align: center;
+	width: 480px; height: 340px;
+	margin-top: -74px;
 }
-.Tag:hover .TagL { color: #e8eef5; }
-.Tag.On .TagL    { color: #a7f3c4; }
 
-/* ---------- brand ----------
-   NO sweep highlight: a strip is a rectangle over the logo's bounding box and
-   Panorama has no mask, so it would read as a moving square. Opacity and
-   transform respect the artwork's own alpha; wash-color would too. */
+/* econicons.css is generated and is included AFTER this sheet, and line 4 of
+   it reads `background-size: contain` — the web spelling. Panorama's keyword
+   is `contains`, so that declaration parses as garbage, falls back to `auto`,
+   and the art has been drawing at native size inside this panel in all three
+   modes that have no 3D preview. A bare `.EconIcon` here cannot win the tie on
+   load order; `.EconShot .EconIcon` is (0,2,0) and does, without touching
+   anything else the generated file owns. */
+.EconShot .EconIcon
+{
+	background-size: contains;
+	brightness: 1.04;
+}
 
-.Brand
+/* A dead panel that only ever carried a sound class — the server never touches
+   it (grep of ArsenalMenu.cs: zero hits for music_play). It draws ABOVE the
+   econ art and fills the frame, so using it as a vignette painted decoration
+   over the one thing on screen worth looking at: it ate the corners of square
+   music-kit art and the fingertips of gloves. It is a contact shadow now — the
+   item stands on the floor of the case instead of floating in front of it. It
+   sits UNDER the art, never over it, and it means the same thing in all three
+   econ modes, which a now-playing underline would not. */
+.MusicPlay
 {
-	horizontal-align: left; vertical-align: bottom;
-	margin-left: 46px; margin-bottom: 30px; flow-children: down;
+	width: 260px; height: 18px;
+	horizontal-align: center; vertical-align: bottom;
+	background-color: gradient( radial, 50% 50%, 0% 0%, 50% 50%,
+	                            from( #04070cc4 ), to( #04070c00 ) );
 }
-.BrandT
+
+
+/* ===========================================================================
+   12.  TRANSPORT DECK — music mode
+   =========================================================================== */
+
+/* "currently its mech, scattered especially the listen button." The deck used
+   to hang 153px below the artwork it belongs to, with nothing in between: a
+   control and the thing it controls, stranded from each other. It is 47px
+   under the art box now — 27px of it actually clear, because .DeckPlate's
+   shadow is a 32px blur pushed only 12px down and so climbs 20px ABOVE the
+   plate. At 152px that halo landed on the bottom edge of the album cover with
+   3px to spare: a music kit is a full-bleed square, so `contains` paints it
+   340x340 right down to the box edge, where a glove or pin render carries its
+   own transparent padding and stops 40-50px short. Measure this gap from the
+   shadow, not from the box. The two still read as one assembly — a lit cell
+   standing on a raked plinth. 480px matches the display cell exactly, so the
+   two share an edge instead of merely being near each other. */
+.Deck
 {
-	font-family: "Consolas"; font-size: 10px; letter-spacing: 8px; color: #4ade80;
-	margin-top: 4px; margin-left: 4px;
+	horizontal-align: center; vertical-align: bottom;
+	margin-bottom: 112px;
+	width: 480px; height: 66px;
+	flow-children: right;
+	overflow: noclip noclip;
 }
-.BrandImg
+
+/* .Deck flows its children right, so the plate has to leave the flow or it
+   eats the row. Everything visual lives here; the deck itself is pure geometry
+   and every label above it stays untransformed and pin-sharp.
+   NO world-blur, deliberately: .DeckCap is 8px type and a frosted ground under
+   type that small muddies it. Depth comes from a real drop shadow instead, and
+   the shadow is on the PLATE and not on .Deck — on .Deck it would draw an
+   upright rectangle behind a raked shape and give the deck two silhouettes. */
+.DeckPlate
 {
-	width: 210px; height: 117px;
-	animation-name: 'brandBoot'; animation-duration: 0.8s;
-	animation-timing-function: linear; animation-delay: 0.5s;
-	animation-fill-mode: both;
+	ignore-parent-flow: true;
+	width: 100%; height: 100%;
+	transform: skewx( -13deg );
+	background-color: gradient( linear, 0% 0%, 100% 0%, from( #0a121cf4 ), to( #060c14e2 ) );
+	background-image: url( "file://{images}/armory/grid.png" );
+	background-size: 507px 345px;
+	background-repeat: repeat;
+	background-img-opacity: 0.09;
+	border: 1px solid #23384e;
+	box-shadow: #000000a6 0px 12px 32px 0px;
 }
-.Root.Open .BrandImg
+
+/* Raked to match the plate edge it runs beside — a vertical rail against a
+   raked edge is exactly the detail that makes an interface look assembled out
+   of unrelated parts. Inset 10px so the plate's own 7.6px bulge cannot cross
+   it. It holds no text, so there is nothing here to resample. */
+.DeckRail
 {
-	animation-name: 'brandPulse'; animation-duration: 5.0s;
-	animation-timing-function: ease-in-out; animation-delay: 1.4s;
+	width: 4px; height: 100%; margin-left: 10px;
+	background-color: #4ade80;
+	transform: skewx( -13deg );
+}
+
+/* 22px of lead-in past the rail. The sheared plate's leading edge swings 7.6px
+   to the right at the top of the box, and the cap sits at the top. */
+.DeckBody
+{
+	width: fill-parent-flow( 1.0 ); height: 100%;
+	flow-children: down;
+	padding-top: 15px; padding-right: 0px; padding-bottom: 0px; padding-left: 22px;
+}
+.DeckCap
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 10px; font-weight: bold; letter-spacing: 4px;
+	color: #4ade80;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
+/* 350px, not 300: there is ~366px of clear deck between the lead-in and the
+   key, and kit names were being cut short of the space they actually had. */
+.DeckName
+{
+	font-family: "Stratum2", "Arial";
+	font-size: 18px; font-weight: bold; letter-spacing: 3px;
+	color: #f2f6fa; margin-top: 5px;
+	max-width: 350px;
+	white-space: nowrap; text-overflow: ellipsis;
+	text-shadow: 0px 1px 4px 2.0 #000000;
+}
+
+/* ---------------------------------------------------------------------------
+   The transport key — "especially the listen button".
+
+   Three faults, all fixed at the source. It was counter-skewed to undo a skew
+   on its parent, so it and its glyph were resampled twice. It sat 153px away
+   from the thing it controls. And .ListenGlyph had no font-family at all while
+   rendering U+25B6 / U+25A0 — characters Stratum2 does not contain — so
+   fontconfig substituted a different face for each, with a different baseline
+   and a different optical weight, inside a circle that was centring the BOX
+   and not the glyph.
+
+   The parent no longer transforms, the glyph is collapsed, and BOTH transport
+   marks are art: arrow_right.png stopped, close.png playing. An image has real
+   pixel bounds and lands dead centre, and — unlike a colour flood alone — the
+   stopped and playing states still say different things, which is the readout
+   the server was writing into that label (ArsenalMenu.cs:2376/2407). Draw
+   sizes hold the source aspect exactly (30x50 -> 15x25, 37x37 -> 14x14).
+
+   The one circle in the interface, and it earns it: it is a transport key, and
+   a key is the one control that is not cut from plate. */
+.Listen
+{
+	width: 44px; height: 44px;
+	vertical-align: center; margin-right: 22px;
+	border-radius: 22px;
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #16412a ), to( #08190f ) );
+	border: 2px solid #4ade80;
+	background-image: url( "file://{images}/armory/arrow_right.png" );
+	background-size: 15px 25px;
+	background-position: 53% 50%;
+	background-repeat: no-repeat;
+	box-shadow: #00000099 0px 4px 14px 0px;
+	transition-property: background-color, border-color; transition-duration: 0.10s;
+	transition-timing-function: ease-out;
+}
+.Listen:hover  { background-color: #1d5d39; }
+.Listen:active { background-color: #04070c; }
+/* The mark changes AND the well breathes. No wash-color: it multiplies the
+   whole composite, so a green flood plus a wash renders the playing state as a
+   near-black disc carrying a near-black mark — the inverse of the intent. The
+   ring goes lit, the well pulses, and the stop mark stays bright on both. */
+.Listen.Playing
+{
+	background-image: url( "file://{images}/armory/close.png" );
+	background-size: 14px 14px;
+	background-position: 50% 50%;
+	border-color: #a7f3c4;
+	animation-name: 'transportPulse';
+	animation-duration: 1.7s;
+	animation-timing-function: ease-in-out;
 	animation-iteration-count: infinite;
 }
 
-@keyframes 'brandBoot'
+.ListenGlyph { visibility: collapse; }
+
+
+/* ===========================================================================
+   13.  BRAND
+   =========================================================================== */
+
+/* 140x78 holds cstema.png's 394x219 to within 0.2%, and the block clears the
+   dock's widest band by 54px on a 1440 canvas. No sweep highlight: Panorama
+   has no mask, so a strip over the logo is a moving rectangle crossing its
+   bounding box rather than a highlight on the mark. No boot flicker and no
+   infinite pulse either — a CRT glitch is a stock gag, and a logo breathing
+   forever puts the interface's only permanent motion on the one element that
+   never changes state. */
+.Brand
 {
-	0%   { opacity: 0.0; }
-	22%  { opacity: 1.0; }
-	30%  { opacity: 0.12; }
-	42%  { opacity: 1.0; }
-	50%  { opacity: 0.40; }
-	100% { opacity: 1.0; }
+	horizontal-align: left; vertical-align: bottom;
+	margin-left: 26px; margin-bottom: 72px;
+	flow-children: down;
 }
-@keyframes 'brandPulse'
+.BrandImg { width: 190px; height: 106px; }
+
+
+/* ===========================================================================
+   14.  HIDDEN STATES — declared once, last, so nothing can outrank them
+   =========================================================================== */
+
+.Row.Hide      { visibility: collapse; }
+.Tag.Hide      { visibility: collapse; }
+.DockRow.Hide  { visibility: collapse; }
+.Pager.Hide    { visibility: collapse; }
+.Deck.Hide     { visibility: collapse; }
+.EconShot.Hide { visibility: collapse; }
+
+
+/* ===========================================================================
+   15.  MOTION — two animations, and that is the whole budget
+   =========================================================================== */
+
+/* clip is the reveal of choice because it does not resample text: the case
+   wipes open downward with every glyph still crisp, where a scale or a
+   translate would soften all 144 rows for the length of the animation. */
+@keyframes 'caseOpen'
 {
-	0%   { opacity: 0.86; }
-	50%  { opacity: 1.00; }
-	100% { opacity: 0.86; }
+	0%   { opacity: 0.0; clip: rect( 0%, 100%, 40%, 0% ); }
+	100% { opacity: 1.0; clip: rect( 0%, 100%, 100%, 0% ); }
 }
 
-.DockRow.Hide { visibility: collapse; }
+/* The only motion here that is not a reveal, and it is here because this is
+   the one state the interface cannot otherwise show: audio is playing and
+   nothing on screen is moving. */
+@keyframes 'transportPulse'
+{
+	0%   { background-color: #16412a; }
+	50%  { background-color: #2f9e5a; }
+	100% { background-color: #16412a; }
+}

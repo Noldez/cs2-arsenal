@@ -100,6 +100,7 @@ LAYOUT = '''<!--
 <root>
 \t<styles>
 \t\t<include src="file://{resources}/styles/custom_game/skins.css" />
+\t\t<include src="file://{resources}/styles/custom_game/econicons.css" />
 \t</styles>
 
 \t<Panel class="RootWrap">
@@ -120,6 +121,33 @@ LAYOUT = '''<!--
 \t\t\t<Label class="SpineT" text="SKIN" />
 \t\t</Panel>
 
+\t\t<!-- Glove mode has no 3D preview: a glove is worn, and the client only resolves one when
+\t\t     the pawn is built. This shows CS2's own econ art for the selected finish instead, which
+\t\t     the server picks by putting a g<paintIndex> class on it. -->
+\t\t<Panel id="econ_shot" class="EconShot Hide" hittest="false">
+\t\t\t<Panel id="econ_icon" class="EconIcon" hittest="false" />
+\t\t\t<!-- Panorama plays a soundevent the moment a class carrying `sound:` is applied, so
+\t\t\t     toggling one of the k<id> classes here previews a music kit. -->
+\t\t\t<Panel id="music_play" class="MusicPlay" hittest="false" />
+\t\t</Panel>
+
+\t\t<!-- OUTSIDE econ_shot on purpose: that panel is hittest="false", so a button inside it
+\t\t     could never be clicked, and a child sitting past its edge on a negative margin gets
+\t\t     clipped. -->
+\t\t<!-- A transport bar rather than a lone button: the kit it belongs to is written on it, so
+\t\t     the control and the thing it controls read as one object instead of two scattered ones. -->
+\t\t<Panel id="deck" class="Deck Hide" hittest="false">
+\t\t\t<Panel class="DeckPlate" hittest="false" />
+\t\t\t<Panel class="DeckRail" hittest="false" />
+\t\t\t<Panel class="DeckBody" hittest="false">
+\t\t\t\t<Label class="DeckCap" text="NOW PLAYING" />
+\t\t\t\t<Label id="deck_name" class="DeckName" text="{s:v}" />
+\t\t\t</Panel>
+\t\t\t<Button id="btn_listen" class="Listen">
+\t\t\t\t<Label id="btn_listen_g" class="ListenGlyph" text="{s:v}" />
+\t\t\t</Button>
+\t\t</Panel>
+
 \t\t<Panel class="Readout" hittest="false">
 \t\t\t<Label id="skinname" class="SkinName" text="{s:v}" />
 \t\t\t<Panel class="ReadRow" hittest="false">
@@ -132,11 +160,16 @@ LAYOUT = '''<!--
 COLUMNS
 
 \t\t<Panel class="Corner" hittest="false">
-\t\t\t<Button id="btn_gloves" class="Tag"><Label class="TagL" text="GLOVES" /></Button>
-\t\t\t<Button id="btn_equip" class="Tag"><Label class="TagL" text="EQUIP" /></Button>
-\t\t\t<Button id="btn_mode" class="Tag"><Label class="TagL" text="STICKERS" /></Button>
-\t\t\t<Button id="btn_close" class="Tag"><Label class="TagL" text="ESC" /></Button>
+\t\t\t<Button id="btn_weapons" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="WEAPONS" /></Button>
+\t\t\t<Button id="btn_knives" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="KNIVES" /></Button>
+\t\t\t<Button id="btn_gloves" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="GLOVES" /></Button>
+\t\t\t<Button id="btn_pins" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="PINS" /></Button>
+\t\t\t<Button id="btn_music" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="MUSIC" /></Button>
+\t\t\t<Button id="btn_equip" class="Tag TagGo"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="EQUIP" /></Button>
+\t\t\t<Button id="btn_close" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="ESC" /></Button>
 \t\t</Panel>
+
+\t\t<Label id="equipped" class="Equipped" text="{s:v}" />
 
 \t\t<Panel class="Dock" hittest="false">
 \t\t\t<Panel class="DockRule" hittest="false" />
@@ -147,18 +180,19 @@ SLOTS
 \t\t\t\t<Panel class="VRule" hittest="false" />
 FIELDS
 \t\t\t\t<Panel class="VRule" hittest="false" />
-\t\t\t\t<Button id="stk_clear" class="Tag"><Label class="TagL" text="CLR" /></Button>
+\t\t\t\t<Button id="stk_clear" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="CLR" /></Button>
 \t\t\t</Panel>
 
-\t\t\t<Panel class="DockRow DockView" hittest="false">
+\t\t\t<Panel id="view_row" class="DockRow DockView" hittest="false">
+\t\t\t\t<Button id="btn_mode" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="STICKERS" /></Button>
+\t\t\t\t<Panel class="VRule" hittest="false" />
 VIEW
-\t\t\t\t<Button id="view_reset" class="Tag"><Label class="TagL" text="RESET" /></Button>
+\t\t\t\t<Button id="view_reset" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="RESET" /></Button>
 \t\t\t</Panel>
 \t\t</Panel>
 
 \t\t<Panel class="Brand" hittest="false">
 \t\t\t<Image class="BrandImg" src="file://{images}/armory/cstema.png" />
-			<Label class="BrandT" text="ARSENAL" />
 \t\t</Panel>
 
 \t</Panel>

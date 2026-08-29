@@ -38,6 +38,7 @@ internal class InterfaceBridge
         EconItemManager = sharedSystem.GetEconItemManager();
         PhysicsQuery    = sharedSystem.GetPhysicsQueryManager();
         ParticleManager = sharedSystem.GetParticleManager();
+        SoundManager    = sharedSystem.GetSoundManager();
     }
 
     public string  DllPath   { get; }
@@ -57,6 +58,7 @@ internal class InterfaceBridge
     public ILibraryModuleManager ModuleManager   { get; }
     public IPhysicsQueryManager  PhysicsQuery    { get; }
     public IParticleManager      ParticleManager { get; }
+    public ISoundManager         SoundManager    { get; }
 
     public ILoggerFactory LoggerFactory => _sharedSystem.GetLoggerFactory();
 }
