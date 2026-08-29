@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+items_game.txt
+csgo_english.txt
+__pycache__/

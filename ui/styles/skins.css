@@ -1,0 +1,363 @@
+/* ===========================================================================
+   ARMORY / ARSENAL - CSTEMA
+
+   Panorama CSS, not web CSS:
+     * @keyframes names MUST be single-quoted or the WHOLE sheet fails to parse
+       and every panel silently never builds
+     * box-shadow puts the COLOUR FIRST:  #rrggbb x y blur spread
+     * gradient( linear, x0 y0, x1 y1, from( c ), to( c ) ) - no linear-gradient()
+     * no display/flex/grid; layout is flow-children, and a container WITHOUT it
+       overlaps its children - which is how every block here anchors itself
+     * overflow: squish scroll  is the scrolling form; `noclip` does not exist
+     * an <Image> has real pixel bounds and centres exactly; a text glyph sits on
+       its font baseline and never quite does - that is why the arrows are art
+     * every image must live in OUR content tree and be referenced as .png (the
+       compiler rewrites to _png.vtex_c). A path into Valve's pak01 compiles to
+       nothing and renders as an empty box.
+
+   THE MIDDLE IS EMPTY ON PURPOSE - a real weapon entity renders back there and
+   Panorama always draws above the world.
+
+   Look: an instrument readout, not a web form. NOTHING is a container. Structure
+   is hairline rules cut to deliberate lengths; the focused row is marked by one
+   device only - its rule runs long and turns accent. Deliberately absent, all of
+   them decoration standing in for information: filled panels, the accent bar down
+   the row edge, rivets, texture on the controls, corner ticks.
+
+   Palette is CSTEMA's own, from the site's globals.css: #4ade80 on #04080f.
+   =========================================================================== */
+
+.RootWrap { width: 100%; height: 100%; }
+
+.Root
+{
+	width: 100%; height: 100%;
+	opacity: 1;
+	transition-property: opacity; transition-duration: 0.16s;
+}
+.Root.Closed { opacity: 0; }
+.Root.Open   { sound: "UIPanorama.buymenu_enter"; }
+
+/* The map behind is BRIGHT and changes as the list scrolls past windows and
+   panelling, so hairline type on bare render is unreadable in places. Each column
+   gets its own scrim, plus a top and bottom fade for the header and the dock.
+   These are the only fills in the sheet and they exist to make text legible. */
+/* NO full-screen fill. Panorama always draws above the world, so a screen-wide
+   scrim dims the weapon itself - the one thing on screen that must stay bright.
+   The scrims are cut to the columns, where the text actually needs a ground. */
+.Ground { width: 100%; height: 100%; }
+.TopFade
+{
+	width: 100%; height: 150px; vertical-align: top;
+	background-color: gradient( linear, 0% 0%, 0% 100%, from( #04080fee ), to( #04080f00 ) );
+}
+.BotFade
+{
+	width: 100%; height: 190px; vertical-align: bottom;
+	background-color: gradient( linear, 0% 100%, 0% 0%, from( #04080ff2 ), to( #04080f00 ) );
+}
+.Scrim { width: 620px; height: 100%; vertical-align: center; }
+.ColLScrim
+{
+	horizontal-align: left;
+	/* deliberately empty: readability comes from a box behind each ROW, not from a wash
+	   down the side of the screen */
+}
+.ColRScrim
+{
+	horizontal-align: right;
+
+}
+
+/* ---------- header ---------- */
+
+.Head
+{
+	horizontal-align: left; vertical-align: top;
+	margin-left: 46px; margin-top: 34px; flow-children: down;
+}
+.Kick
+{
+	font-family: "Consolas"; font-size: 13px; letter-spacing: 7px; color: #c9f5da;
+	text-shadow: 0px 1px 4px 2.0 #000000;
+}
+.Title
+{
+	font-family: "Stratum2"; font-size: 52px; font-weight: bold; letter-spacing: 12px;
+	color: #f4f4f5; margin-top: 4px;
+	text-shadow: 0px 2px 10px 3.0 #000000;
+}
+
+/* ---------- index spine ---------- */
+
+.Spine
+{
+	horizontal-align: left; vertical-align: center;
+	margin-left: 34px; width: 84px; flow-children: down;
+}
+.SpineN
+{
+	font-family: "Stratum2"; font-size: 78px; font-weight: bold; color: #3d5170;
+	text-shadow: 0px 2px 6px 2.0 #000000;
+}
+.SpineRule { width: 46px; height: 1px; background-color: #4ade80; margin-top: 8px; margin-bottom: 8px; }
+.SpineT
+{
+	font-family: "Consolas"; font-size: 10px; letter-spacing: 5px; color: #9db0c6;
+}
+
+/* ---------- readout ---------- */
+
+.Readout
+{
+	horizontal-align: center; vertical-align: top; margin-top: 30px; flow-children: down;
+}
+.SkinName
+{
+	font-family: "Stratum2"; font-size: 34px; font-weight: bold; letter-spacing: 4px;
+	color: #f4f4f5; horizontal-align: center;
+	text-shadow: 0px 2px 10px 3.0 #000000;
+}
+.ReadRow { flow-children: right; horizontal-align: center; margin-top: 6px; }
+.ReadTick { width: 44px; height: 1px; background-color: #35516f; vertical-align: center; }
+.SkinRarity
+{
+	font-family: "Consolas"; font-size: 12px; letter-spacing: 5px; color: #9db0c6;
+	margin-left: 12px; margin-right: 12px;
+}
+
+/* rarity tints: seven shared class names serve all 2017 finishes */
+.SkinRarity.R0 { color: #b0c3d9; } .SkinRarity.R1 { color: #5e98d9; }
+.SkinRarity.R2 { color: #4b69ff; } .SkinRarity.R3 { color: #8847ff; }
+.SkinRarity.R4 { color: #d32ce6; } .SkinRarity.R5 { color: #eb4b4b; }
+.SkinRarity.R6 { color: #e4ae39; }
+
+/* ---------- columns ---------- */
+
+.Col { vertical-align: center; width: 300px; flow-children: down; }
+.ColL { horizontal-align: left;  margin-left: 132px; }
+.ColR { horizontal-align: right; margin-right: 132px; }
+
+.ColHead { flow-children: right; width: 100%; margin-bottom: 12px; }
+.HeadIdx
+{
+	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6b8099;
+	vertical-align: center;
+}
+.HeadTick { width: 34px; height: 1px; background-color: #4ade80; vertical-align: center; margin-left: 10px; margin-right: 10px; }
+.Sec
+{
+	font-family: "Stratum2"; font-size: 15px; font-weight: bold; letter-spacing: 5px;
+	color: #ffffff; vertical-align: center;
+	text-shadow: 0px 2px 7px 3.0 #000000;
+}
+.HeadRule { width: 118px; height: 1px; background-color: #35516f; vertical-align: center; margin-left: 10px; margin-right: 10px; }
+.HeadN
+{
+	font-family: "Consolas"; font-size: 10px; letter-spacing: 2px; color: #93a9c0;
+	vertical-align: center;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
+
+/* The client scrolls this natively - the server is never told about a wheel,
+   because custom_hud_layout has no scroll event at all. 72 rows are declared, so
+   weapons (55), finishes (max 60) and collections (65) fit whole. */
+.Scroll
+{
+	width: 100%; height: 578px;
+	overflow: squish scroll;
+	flow-children: down;
+}
+
+/* ---------- rows ---------- */
+
+.Row
+{
+	width: 100%; height: 34px; flow-children: right;
+	padding-left: 12px; padding-right: 12px;
+	border-bottom: 1px solid #16283c;
+	transition-property: background-color; transition-duration: 0.09s;
+}
+/* every row carries its OWN box - that is where the legibility comes from now, so the
+   world stays visible either side of the lists instead of sitting behind a wash */
+.Row       { background-color: #04080fe0; }
+.Row:hover { background-color: #0f1c2be0; }
+.Row.Hide  { visibility: collapse; }
+
+/* the ONE mark of focus: the row's own rule runs long and turns accent */
+.Row.On { border-bottom: 1px solid #4ade80; }
+
+.RowN
+{
+	font-family: "Consolas"; font-size: 9px; color: #6b8099;
+	width: 20px; vertical-align: center;
+}
+.Row.On .RowN { color: #4ade80; }
+
+.RowL
+{
+	font-family: "Stratum2"; font-size: 13px; font-weight: bold; letter-spacing: 3px;
+	color: #b8c6d6; vertical-align: center;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
+.Row.On .RowL { color: #f4f4f5; }
+
+.RowM
+{
+	font-family: "Consolas"; font-size: 10px; color: #93a9c0;
+	horizontal-align: right; vertical-align: center;
+	text-shadow: 0px 1px 3px 2.0 #000000;
+}
+.Row.On .RowM { color: #d6e2ee; }
+
+/* finish rows carry the rarity of the skin they name */
+.Row.R0 .RowL { color: #b0c3d9; } .Row.R1 .RowL { color: #5e98d9; }
+.Row.R2 .RowL { color: #4b69ff; } .Row.R3 .RowL { color: #8847ff; }
+.Row.R4 .RowL { color: #d32ce6; } .Row.R5 .RowL { color: #eb4b4b; }
+.Row.R6 .RowL { color: #e4ae39; }
+.Row.On.R0 .RowL, .Row.On.R1 .RowL, .Row.On.R2 .RowL, .Row.On.R3 .RowL,
+.Row.On.R4 .RowL, .Row.On.R5 .RowL, .Row.On.R6 .RowL { color: #f4f4f5; }
+
+/* ---------- pager: sticker list only ----------
+   Every other list fits in the declared rows and scrolls, so it has none. The
+   server adds Hide when the collection fits. */
+.Pager { flow-children: right; horizontal-align: center; margin-top: 12px; }
+.Pager.Hide { visibility: collapse; }
+
+/* ---------- dock ---------- */
+
+.Dock
+{
+	horizontal-align: center; vertical-align: bottom;
+	margin-bottom: 44px; width: 1060px; flow-children: down;
+}
+.DockRule { width: 100%; height: 1px; background-color: #35516f; }
+.DockRow
+{
+	flow-children: right; width: 100%; margin-top: 14px;
+	background-color: #04080fe0;
+	padding: 6px 10px 6px 10px;
+}
+.DockRow.Hide { visibility: collapse; }
+.DockView { margin-top: 12px; }
+
+.VRule { width: 1px; height: 22px; background-color: #0f1a29; margin-left: 14px; margin-right: 14px; vertical-align: center; }
+
+.Cap
+{
+	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6b8099;
+	vertical-align: center; margin-right: 9px;
+}
+.Unit
+{
+	font-family: "Consolas"; font-size: 8px; color: #2f3d4e;
+	vertical-align: center; margin-left: 5px;
+}
+.Grp { flow-children: right; margin-right: 14px; }
+.Val
+{
+	font-family: "Consolas"; font-size: 12px; color: #dfe7f0;
+	width: 54px; text-align: center; vertical-align: center;
+}
+
+.Step
+{
+	width: 18px; height: 18px; vertical-align: center;
+	border: 1px solid #1b2a41;
+	transition-property: border; transition-duration: 0.09s;
+}
+.Step:hover { border: 1px solid #4ade80; }
+.StepL
+{
+	font-family: "Consolas"; font-size: 11px; color: #6d8199;
+	horizontal-align: center; vertical-align: center;
+}
+.Step:hover .StepL { color: #e8eef5; }
+
+.Chip
+{
+	width: 22px; height: 22px; margin-right: 6px; vertical-align: center;
+	border: 1px solid #1b2a41;
+	transition-property: border; transition-duration: 0.09s;
+}
+.Chip:hover  { border: 1px solid #4ade80; }
+.Chip.On     { border: 1px solid #4ade80; }
+.Chip.Has    { border: 1px solid #6d5a38; }
+.ChipL
+{
+	font-family: "Consolas"; font-size: 10px; color: #6d8199;
+	horizontal-align: center; vertical-align: center;
+}
+.Chip.On .ChipL { color: #ffffff; }
+
+/* ---------- corner tags ---------- */
+
+.Corner
+{
+	horizontal-align: right; vertical-align: top;
+	margin-top: 34px; margin-right: 46px; flow-children: right-wrap;
+}
+.Tag
+{
+	height: 22px; margin-left: 8px; vertical-align: center;
+	padding-left: 12px; padding-right: 12px;
+	background-color: #04080fe0;
+	border: 1px solid #1b2a41;
+	transition-property: border; transition-duration: 0.09s;
+}
+.Tag:hover { border: 1px solid #4ade80; }
+.Tag.On    { border: 1px solid #4ade80; }
+.TagL
+{
+	font-family: "Consolas"; font-size: 9px; letter-spacing: 3px; color: #6d8199;
+	horizontal-align: center; vertical-align: center;
+}
+.Tag:hover .TagL { color: #e8eef5; }
+.Tag.On .TagL    { color: #a7f3c4; }
+
+/* ---------- brand ----------
+   NO sweep highlight: a strip is a rectangle over the logo's bounding box and
+   Panorama has no mask, so it would read as a moving square. Opacity and
+   transform respect the artwork's own alpha; wash-color would too. */
+
+.Brand
+{
+	horizontal-align: left; vertical-align: bottom;
+	margin-left: 46px; margin-bottom: 30px; flow-children: down;
+}
+.BrandT
+{
+	font-family: "Consolas"; font-size: 10px; letter-spacing: 8px; color: #4ade80;
+	margin-top: 4px; margin-left: 4px;
+}
+.BrandImg
+{
+	width: 210px; height: 117px;
+	animation-name: 'brandBoot'; animation-duration: 0.8s;
+	animation-timing-function: linear; animation-delay: 0.5s;
+	animation-fill-mode: both;
+}
+.Root.Open .BrandImg
+{
+	animation-name: 'brandPulse'; animation-duration: 5.0s;
+	animation-timing-function: ease-in-out; animation-delay: 1.4s;
+	animation-iteration-count: infinite;
+}
+
+@keyframes 'brandBoot'
+{
+	0%   { opacity: 0.0; }
+	22%  { opacity: 1.0; }
+	30%  { opacity: 0.12; }
+	42%  { opacity: 1.0; }
+	50%  { opacity: 0.40; }
+	100% { opacity: 1.0; }
+}
+@keyframes 'brandPulse'
+{
+	0%   { opacity: 0.86; }
+	50%  { opacity: 1.00; }
+	100% { opacity: 0.86; }
+}
+
+.DockRow.Hide { visibility: collapse; }
