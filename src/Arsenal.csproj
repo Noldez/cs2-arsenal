@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AssemblyName>Arsenal</AssemblyName>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<RootNamespace>Armory</RootNamespace>
+		<Version>1.0.0</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Iced" Version="1.21.0" />
+		<PackageReference Include="ModSharp.Sharp.Extensions.CommandManager" Version="2.1.106" />
+		<!--
+		  This targets a FORK of ModSharp that still carries the custom_hud_layout API
+		  (ICustomHudManager, ICustomHudLayout). Upstream has removed both in favour of the
+		  script interop API, so the published package will not satisfy this build. Point the
+		  HintPath below at a Sharp.Shared.dll from that fork, or port the interface layer.
+		-->
+		<PackageReference Include="ModSharp.Sharp.Shared" Version="*" ExcludeAssets="all" PrivateAssets="all" />
+		<Reference Include="Sharp.Shared">
+			<HintPath>..\lib\Sharp.Shared.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<PackageReference Include="MySqlConnector" Version="2.5.0" />
+		<PackageReference Include="SqlSugarCoreNoDrive" Version="5.1.4.213" />
+	</ItemGroup>
+
+</Project>

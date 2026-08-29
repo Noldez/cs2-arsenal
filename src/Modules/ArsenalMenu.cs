@@ -167,7 +167,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     ///     doing all of it in one tick is the one meaningful difference left between our attempt
     ///     and theirs.
     /// </summary>
-    private int                  _glovePending = -1;
+    private readonly bool[]      _glovePending = new bool[MaxSlots];
 
     /// <summary>
     ///     Show the selected glove as a MODEL in the world, the way weapons are previewed, rather
@@ -185,9 +185,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     private bool                 _glove3d;
 
     /// <summary>Slot to respawn on the next frame, set by EQUIP in glove mode.</summary>
-    private int                  _respawnPending = -1;
+    private readonly bool[]      _respawnPending = new bool[MaxSlots];
 
-    private float                _gloveDueAt;
+    private readonly float[]     _gloveDueAt = new float[MaxSlots];
 
     /// <summary>Glove key -> item definition index and display name, from armory_gloves.json.</summary>
     private readonly List<string>                 _gloves      = new();
@@ -208,8 +208,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
 
     private ICustomHudLayout? _layout;
-    private IBaseWeapon?      _item;
-    private IBaseEntity?      _lamp;
+    private readonly IBaseWeapon?[] _item = new IBaseWeapon?[MaxSlots];
+    private readonly IBaseEntity?[] _lamp = new IBaseEntity?[MaxSlots];
     private readonly List<IBaseEntity> _roomParts = new();
 
     /// <summary>Where the team-select prefab room sits on this map, found once per map load.</summary>
@@ -277,13 +277,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     private bool              _voidDown;
     private int               _smokeKind;
     private float             _exposure;
-    private IBaseEntity?      _cam;
-    private Vector?           _eye;
-    private byte              _owner;
+    private readonly IBaseEntity?[] _cam = new IBaseEntity?[MaxSlots];
+    private readonly Vector?[] _eye = new Vector?[MaxSlots];
     private readonly IPlayerCache        _cache;
     private readonly InventoryRepository _repository;
 
-    private bool              _spawnFailed;
+    private readonly bool[]   _spawnFailed = new bool[MaxSlots];
 
     /// <summary>
     ///     Spawn the preview weapon directly instead of giving it to the player and dropping it.
@@ -297,16 +296,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     ///     OFF by default on purpose. A bad weapon entity takes the server down with it, and a
     ///     default-on crash reproduces itself on every restart. Enable with armory_arsenal_build.
     /// </summary>
-    private bool              _buildOurselves;
+    private bool              _buildOurselves = true;
 
     /// <summary>Whether the weapon standing there was spawned rather than given.</summary>
-    private bool              _builtOurselves;
-    private bool              _traceLog;
-    private float             _clearance;
-    private EntityIndex       _dressedPawn;
-    private uint              _ownerAccount;
+    private readonly bool[]   _builtOurselves = new bool[MaxSlots];
+    private readonly bool[]   _traceLog = new bool[MaxSlots];
+    private readonly float[]  _clearance = new float[MaxSlots];
+    private readonly EntityIndex[] _dressedPawn = new EntityIndex[MaxSlots];
+    private readonly uint[]   _ownerAccount = new uint[MaxSlots];
     private bool              _ownClass;
-    private float             _lastRebuild;
+    private readonly float[]  _lastRebuild = new float[MaxSlots];
     /// <summary>
     ///     The preview light. Worth knowing: a long hunt for a "pulsing" light turned out to be
     ///     the MAP - cosmic_princess_kaguya animates its own lighting - not this particle. Bisect
@@ -321,11 +320,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     /// <summary>Diagnostic toggle for the legacy-model bodygroup switch.</summary>
     private bool              _legacyBodygroup;
-    private float             _viewYaw;
+    private readonly float[]  _viewYaw = new float[MaxSlots];
 
     /// <summary>Weapons we alpha'd out on open, so close can put them back.</summary>
-    private readonly List<IBaseModelEntity> _hiddenWeapons = new();
-    private string            _spawned = "";
+    private readonly List<IBaseModelEntity>[] _hiddenWeapons =
+        Enumerable.Range(0, MaxSlots).Select(_ => new List<IBaseModelEntity>()).ToArray();
+    private readonly string[] _spawned = Enumerable.Repeat("", MaxSlots).ToArray();
 
     public ArsenalMenu(InterfaceBridge      bridge,
                        ISharedSystem        sharedSystem,
@@ -412,9 +412,15 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     public void OnServerActivate()
     {
         _layout = null;
-        _item   = null;
-        _cam    = null;
-        _spawned = "";
+
+        // a map change invalidates every player's preview, not just one
+        for (var i = 0; i < MaxSlots; i++)
+        {
+            _item[i]    = null;
+            _lamp[i]    = null;
+            _cam[i]     = null;
+            _spawned[i] = "";
+        }
 
         for (var i = 0; i < MaxSlots; i++)
         {
@@ -442,7 +448,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
             var slot = new PlayerSlot((byte) s);
 
-            _dressedPawn = default;   // force the pawn to be re-dressed
+            _dressedPawn[s] = default;   // force the pawn to be re-dressed
 
             Layout()?.SetInputCaptureEnabled(slot, false);
             Layout()?.SetInputCaptureEnabled(slot, true);
@@ -924,14 +930,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         // attributes onto an already-networked weapon changes nothing on screen, which is why
         // picking a finish appeared to do nothing. So a finish change respawns the item too.
         // UpdateEconItemAttributes does not get round this; see docs/ARSENAL.md.
-        if (_item is not null && _item.IsValid() && _spawned == key)
+        if (_item[s] is not null && _item[s].IsValid() && _spawned[s] == key)
         {
-            PlaceItem();
+            PlaceItem(s);
 
             return;
         }
 
-        DropItem();
+        DropItem(s);
 
         // The non-generic SpawnEntitySync hands back a plain BaseEntity wrapper, so every
         // `is IBaseWeapon` test failed and the paint silently never ran. The typed overload is
@@ -943,14 +949,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         // the engine's own construction path, the one every dropped gun on the ground uses.
         if (Pawn(slot) is not { } pawn)
         {
-            _spawnFailed = true;
+            _spawnFailed[s] = true;
 
             return;
         }
 
         IBaseWeapon? given = null;
 
-        _builtOurselves = false;
+        _builtOurselves[s] = false;
         SetPickup(pawn, false);
 
         // Spawn it ourselves, the way SpawnTools does: spawn at the origin we want, then hand it
@@ -980,8 +986,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                     if (built.IsValid())
                     {
                         given           = built;
-                        _item           = built;
-                        _builtOurselves = true;
+                        _item[s]           = built;
+                        _builtOurselves[s] = true;
                         Paint(slot);
 
                         _logger.LogInformation("spawned {weapon} as {cls} subclass {def}, no give",
@@ -990,7 +996,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                     else
                     {
                         _logger.LogWarning("{weapon} died on ChangeSubclass {def}", wanted, def);
-                        _item = null;
+                        _item[s] = null;
                     }
                 }
                 else
@@ -1002,7 +1008,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             {
                 _logger.LogWarning("spawning {weapon} threw: {msg}", wanted, ex.Message);
                 given = null;
-                _item = null;
+                _item[s] = null;
             }
         }
 
@@ -1013,7 +1019,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         catch (Exception ex)
         {
             _logger.LogWarning("GiveNamedItem({weapon}) threw: {msg}", wanted, ex.Message);
-            _spawnFailed = true;
+            _spawnFailed[s] = true;
 
             return;
         }
@@ -1021,12 +1027,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         if (given is null || !given.IsValid())
         {
             _logger.LogWarning("Could not give {weapon}", wanted);
-            _spawnFailed = true;
+            _spawnFailed[s] = true;
 
             return;
         }
 
-        _item = given;
+        _item[s] = given;
 
         // dress it while it is still ours, before it becomes a world object
         Paint(slot);
@@ -1037,7 +1043,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         // to it crashes the client.
         try
         {
-            if (!_builtOurselves)
+            if (!_builtOurselves[s])
             {
                 pawn.DropWeapon(given);
             }
@@ -1062,14 +1068,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                                wanted, given.OwnerEntity is null ? "none" : "STILL OWNED");
 
         // the give switched the active weapon, so whatever is in their hands now needs re-hiding
-        HideHeldWeapons(pawn);
+        HideHeldWeapons(pawn, s);
 
-        _spawnFailed = false;
-        _spawned     = key;
-        _traceLog    = true;
+        _spawnFailed[s] = false;
+        _spawned[s]     = key;
+        _traceLog[s]    = true;
 
-        Pin(_item);
-        PlaceItem();
+        Pin(_item[s]);
+        PlaceItem(s);
         LightItem(slot);   // after PlaceItem, or the lamp lands where the weapon was dropped
     }
 
@@ -1143,14 +1149,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private void PlaceRoom(PlayerSlot owner)
     {
-        if (_eye is null)
+        var s = owner.AsPrimitive();
+
+        if (_eye[s] is null)
         {
             return;
         }
 
         DropRoom();
 
-        var yr = _viewYaw * MathF.PI / 180f;
+        var yr = _viewYaw[s] * MathF.PI / 180f;
 
         // forward and right in view space, so the booth is built around the sight line
         var fx = MathF.Cos(yr);
@@ -1158,9 +1166,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var rx = MathF.Sin(yr);
         var ry = -MathF.Cos(yr);
 
-        var mid = new Vector(_eye.Value.X + (fx * (_roomBack * 0.5f)),
-                             _eye.Value.Y + (fy * (_roomBack * 0.5f)),
-                             _eye.Value.Z);
+        var mid = new Vector(_eye[s].Value.X + (fx * (_roomBack * 0.5f)),
+                             _eye[s].Value.Y + (fy * (_roomBack * 0.5f)),
+                             _eye[s].Value.Z);
 
         // back wall, both sides, floor and ceiling - the front is left open for the camera
         var half = _roomBack * 0.5f;
@@ -1202,7 +1210,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 panel.Teleport(new Vector(mid.X + (fx * f) + (rx * r),
                                           mid.Y + (fy * f) + (ry * r),
                                           mid.Z + u),
-                               new Vector(0f, _viewYaw, 0f),
+                               new Vector(0f, _viewYaw[s], 0f),
                                new Vector(0f, 0f, 0f));
             }
             catch
@@ -1641,8 +1649,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
         _logger.LogInformation("glove preview: entered, {n} gloves in catalogue", _gloves.Count);
 
-        DropItem();          // no floating weapon in glove mode
-        KillLamp();
+        DropItem(s);          // no floating weapon in glove mode
+        KillLamp(s);
 
         if (_gloves.Count == 0)
         {
@@ -1674,7 +1682,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             pawn.RenderMode  = RenderMode.Normal;
             pawn.RenderColor = new Color32(255, 255, 255, 255);
             HideFromOthers(pawn, slot);
-            RestoreHeldWeapons();
+            RestoreHeldWeapons(s);
         }
         catch (Exception ex)
         {
@@ -1700,8 +1708,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // expects ONE reader of the first_or_third_person token and now finds six, so it has
             // been a null pointer since some CS2 update - the module warns about it at startup.
             // Toggling the bodygroup by name is the same thing by a supported route.
-            _glovePending = s;
-            _gloveDueAt   = _bridge.ModSharp.GetGlobals().CurTime + 0.10f;
+            _glovePending[s] = true;
+            _gloveDueAt[s]   = _bridge.ModSharp.GetGlobals().CurTime + 0.10f;
 
             var toggled = false;
 
@@ -1821,6 +1829,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private void RespawnFor(PlayerSlot slot)
     {
+        var s = slot.AsPrimitive();
+
         foreach (var controller in _bridge.EntityManager.GetPlayerControllers())
         {
             if (controller is null || !controller.IsValid() || new PlayerSlot(controller) != slot)
@@ -1831,7 +1841,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             try
             {
                 controller.Respawn();
-                _dressedPawn = 0;   // the new pawn needs dressing from scratch
+                _dressedPawn[s] = 0;   // the new pawn needs dressing from scratch
                 _logger.LogInformation("equip: respawned slot {s} to show the gloves",
                                        slot.AsPrimitive());
             }
@@ -1857,14 +1867,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var def   = _gloveDefs[glove];
         var key   = "glove:" + def + "|" + paint;
 
-        if (_item is not null && _item.IsValid() && _spawned == key)
+        if (_item[s] is not null && _item[s].IsValid() && _spawned[s] == key)
         {
-            PlaceItem();
+            PlaceItem(s);
 
             return;
         }
 
-        DropItem();
+        DropItem(s);
 
         try
         {
@@ -1887,26 +1897,26 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             if (!built.IsValid())
             {
                 _logger.LogWarning("glove model: died on ChangeSubclass {def}", def);
-                _item = null;
+                _item[s] = null;
 
                 return;
             }
 
-            _item = built;
+            _item[s] = built;
 
             var view = built.AttributeContainer.Item;
-            _applier.ClaimItem(view, _ownerAccount);
+            _applier.ClaimItem(view, _ownerAccount[s]);
             view.SetItemDefinitionIndexLocal((ushort) def);
             view.SetInitializedLocal(true);
             _applier.ApplyPaint(view, paint, 0.01f, 0);
 
-            _spawned     = key;
-            _spawnFailed = false;
-            _traceLog    = true;
+            _spawned[s]     = key;
+            _spawnFailed[s] = false;
+            _traceLog[s]    = true;
 
             Pin(built);
             ShowOnlyTo(built, slot);
-            PlaceItem();
+            PlaceItem(s);
             LightItem(slot);
 
             _logger.LogInformation("glove model: {glove} def {def} paint {paint} spawned",
@@ -1915,7 +1925,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         catch (Exception ex)
         {
             _logger.LogWarning("glove model threw: {msg}", ex.Message);
-            _item = null;
+            _item[s] = null;
         }
     }
 
@@ -1947,18 +1957,18 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         }
     }
 
-    private void KillLamp()
+    private void KillLamp(int s)
     {
-        if (_lamp is null)
+        if (_lamp[s] is null)
         {
             return;
         }
 
         try
         {
-            if (_lamp.IsValid())
+            if (_lamp[s].IsValid())
             {
-                _lamp.Kill();
+                _lamp[s].Kill();
             }
         }
         catch
@@ -1966,7 +1976,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // already gone
         }
 
-        _lamp = null;
+        _lamp[s] = null;
     }
 
     /// <summary>Row clicks while in glove mode. Returns true when the click was ours.</summary>
@@ -2001,7 +2011,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private void LeaveGloveMode(PlayerSlot slot)
     {
-        _dressedPawn = 0;   // force Reassert to re-apply everything on the next frame
+        var s = slot.AsPrimitive();
+
+        _dressedPawn[s] = 0;   // force Reassert to re-apply everything on the next frame
 
         if (Pawn(slot) is { } pawn && pawn.IsValid())
         {
@@ -2010,7 +2022,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 _bridge.TransmitManager.SetEntityBlock(pawn.Index, true);
                 pawn.RenderMode  = RenderMode.TransAlpha;
                 pawn.RenderColor = new Color32(255, 255, 255, 0);
-                HideHeldWeapons(pawn);
+                HideHeldWeapons(pawn, s);
             }
             catch (Exception ex)
             {
@@ -2019,7 +2031,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             }
         }
 
-        AttachView(slot, _cam);
+        AttachView(slot, _cam[s]);
     }
 
     /// <summary>
@@ -2068,7 +2080,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 // Respawn: a glove only reaches the client when the pawn is built, so this is
                 // what actually puts it on their hands. Without it the player would have to die
                 // or rebuy to see the thing they just chose.
-                _respawnPending = slot.AsPrimitive();
+                _respawnPending[slot.AsPrimitive()] = true;
             }
             catch (Exception ex)
             {
@@ -2079,15 +2091,32 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         Refresh(slot);
     }
 
-    private void DropItem()
+    /// <summary>
+    ///     The slot with the browser open, for the diagnostic commands that act on "the" preview.
+    ///     They are single player by nature; everything a real player touches is per slot.
+    /// </summary>
+    private int FirstOpen()
     {
-        ShowToEveryone(_item);
+        for (var i = 0; i < MaxSlots; i++)
+        {
+            if (_open[i])
+            {
+                return i;
+            }
+        }
 
-        if (_item is not null && _item.IsValid())
+        return 0;
+    }
+
+    private void DropItem(int s)
+    {
+        ShowToEveryone(_item[s]);
+
+        if (_item[s] is not null && _item[s].IsValid())
         {
             try
             {
-                _item.Kill();
+                _item[s].Kill();
             }
             catch
             {
@@ -2095,8 +2124,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             }
         }
 
-        _item    = null;
-        _spawned = "";
+        _item[s]    = null;
+        _spawned[s] = "";
     }
 
     private void Paint(PlayerSlot slot)
@@ -2105,7 +2134,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var list   = FinishesFor(s);
         var wanted = _weapons[_wsel[s]];
 
-        if (_item is not { } weapon || list.Length == 0)
+        if (_item[s] is not { } weapon || list.Length == 0)
         {
             return;
         }
@@ -2120,7 +2149,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // client.SteamId.AccountId; this passed 0, leaving an initialised econ item owned by
             // nobody - the client has to resolve that to render the weapon, and an unowned item
             // with a real definition index on it is a good way to make it fail or crash outright.
-            _applier.ClaimItem(view, _ownerAccount);
+            _applier.ClaimItem(view, _ownerAccount[s]);
 
             // Which item this actually is. All 20 knives spawn from the same entity class, so
             // without this every one of them renders as the default knife.
@@ -2219,14 +2248,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     ///     Hold the item still. It does NOT auto-rotate: a spinning gun is unusable once you are
     ///     placing stickers on it, so the angle only ever moves when the player nudges it.
     /// </summary>
-    private void PlaceItem()
+    private void PlaceItem(int s)
     {
-        if (_item is null || !_item.IsValid() || _eye is null)
+        if (_item[s] is null || !_item[s].IsValid() || _eye[s] is null)
         {
             return;
         }
 
-        var yr = _viewYaw * MathF.PI / 180f;
+        var yr = _viewYaw[s] * MathF.PI / 180f;
 
         // right-hand vector of the view, so MOVE reads as left/right on screen rather
         // than in world space
@@ -2234,27 +2263,27 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var rightY = -MathF.Cos(yr);
 
         // never push it past what actually fits - a clamped rifle just reads a little larger
-        var zoom = _zoom[_owner] > 0f ? _zoom[_owner] : 1f;
+        var zoom = _zoom[s] > 0f ? _zoom[s] : 1f;
         var dist = _distOverride > 0f
             ? _distOverride
-            : MathF.Max(10f, MathF.Min(DistanceFor(_weapons[_wsel[_owner]]) * zoom, _clearance - 12f));
-        var pos = new Vector(_eye.Value.X + (MathF.Cos(yr) * dist) + (rightX * _panH[_owner]),
-                             _eye.Value.Y + (MathF.Sin(yr) * dist) + (rightY * _panH[_owner]),
-                             _eye.Value.Z - ZDrop + _panV[_owner]);
+            : MathF.Max(10f, MathF.Min(DistanceFor(_weapons[_wsel[s]]) * zoom, _clearance[s] - 12f));
+        var pos = new Vector(_eye[s].Value.X + (MathF.Cos(yr) * dist) + (rightX * _panH[s]),
+                             _eye[s].Value.Y + (MathF.Sin(yr) * dist) + (rightY * _panH[s]),
+                             _eye[s].Value.Z - ZDrop + _panV[s]);
 
         try
         {
-            _item.Teleport(pos,
-                           new Vector(0f, (_viewYaw + _yaw[_owner]) % 360f, 0f),
+            _item[s].Teleport(pos,
+                           new Vector(0f, (_viewYaw[s] + _yaw[s]) % 360f, 0f),
                            new Vector(0f, 0f, 0f));
 
-            if (_traceLog)
+            if (_traceLog[s])
             {
-                _traceLog = false;
+                _traceLog[s] = false;
                 _logger.LogInformation("placed at {px},{py},{pz} eye {ex},{ey},{ez} dist {d} yaw {yaw}",
                                        (int) pos.X, (int) pos.Y, (int) pos.Z,
-                                       (int) _eye.Value.X, (int) _eye.Value.Y, (int) _eye.Value.Z,
-                                       (int) dist, (int) _viewYaw);
+                                       (int) _eye[s].Value.X, (int) _eye[s].Value.Y, (int) _eye[s].Value.Z,
+                                       (int) dist, (int) _viewYaw[s]);
             }
         }
         catch
@@ -2280,6 +2309,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private void Reassert(PlayerSlot slot)
     {
+        var s = slot.AsPrimitive();
+
         foreach (var controller in _bridge.EntityManager.GetPlayerControllers())
         {
             if (controller is null || !controller.IsValid() || new PlayerSlot(controller) != slot)
@@ -2298,12 +2329,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // the state we actually care about instead.
             var id = pawn.Index;
 
-            if (id == _dressedPawn && pawn.HideHud == HudHidden)
+            if (id == _dressedPawn[s] && pawn.HideHud == HudHidden)
             {
                 return;
             }
 
-            _dressedPawn = id;
+            _dressedPawn[s] = id;
 
             try
             {
@@ -2316,8 +2347,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 // cosmetic only
             }
 
-            _dressedPawn = pawn.Index;
-            HideHeldWeapons(pawn);
+            _dressedPawn[s] = pawn.Index;
+            HideHeldWeapons(pawn, s);
             SetPickup(pawn, false);
 
             // Take the pawn OUT OF THE WORLD for as long as the browser is open. Three separate
@@ -2347,9 +2378,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         }
     }
 
-    private void HideHeldWeapons(IPlayerPawn pawn)
+    private void HideHeldWeapons(IPlayerPawn pawn, int s)
     {
-        _hiddenWeapons.Clear();
+        _hiddenWeapons[s].Clear();
 
         try
         {
@@ -2368,7 +2399,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
                 w.RenderMode  = RenderMode.TransAlpha;
                 w.RenderColor = new Color32(255, 255, 255, 0);
-                _hiddenWeapons.Add(w);
+                _hiddenWeapons[s].Add(w);
             }
         }
         catch (Exception ex)
@@ -2397,9 +2428,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         }
     }
 
-    private void RestoreHeldWeapons()
+    private void RestoreHeldWeapons(int s)
     {
-        foreach (var w in _hiddenWeapons)
+        foreach (var w in _hiddenWeapons[s])
         {
             try
             {
@@ -2415,7 +2446,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             }
         }
 
-        _hiddenWeapons.Clear();
+        _hiddenWeapons[s].Clear();
     }
 
     /// <summary>
@@ -2492,21 +2523,23 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// <summary>Park the camera where the player's eye was, looking straight down the anchor line.</summary>
     private void PlaceCamera(PlayerSlot slot)
     {
-        if (_eye is null)
+        var s = slot.AsPrimitive();
+
+        if (_eye[s] is null)
         {
             return;
         }
 
-        if (_cam is null || !_cam.IsValid())
+        if (_cam[s] is null || !_cam[s].IsValid())
         {
-            _cam = _bridge.EntityManager.SpawnEntitySync("point_camera",
+            _cam[s] = _bridge.EntityManager.SpawnEntitySync("point_camera",
                                                          new Dictionary<string, KeyValuesVariantValueItem>
                                                          {
                                                              ["targetname"] = CamName,
                                                              ["fov"]        = "50",
                                                          });
 
-            if (_cam is null)
+            if (_cam[s] is null)
             {
                 return;
             }
@@ -2515,16 +2548,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         try
         {
             // the item sits straight ahead at eye height, so pitch stays 0 and it lands dead centre
-            _cam.Teleport(_eye.Value, new Vector(0f, _viewYaw, 0f), null);
+            _cam[s].Teleport(_eye[s].Value, new Vector(0f, _viewYaw[s], 0f), null);
         }
         catch
         {
-            _cam = null;
+            _cam[s] = null;
 
             return;
         }
 
-        AttachView(slot, _cam);
+        AttachView(slot, _cam[s]);
     }
 
     private void AttachView(PlayerSlot slot, IBaseEntity? entity)
@@ -2579,16 +2612,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // never did.
             if (_gloveMode[s] && !_glove3d)
             {
-                if (_glovePending == s && now >= _gloveDueAt)
+                if (_glovePending[s] && now >= _gloveDueAt[s])
                 {
-                    _glovePending = -1;
+                    _glovePending[s] = false;
                     RefreshGloveModel(slot);
                 }
 
                 // Respawn on the frame, never inside the database callback that requested it.
-                if (_respawnPending == s)
+                if (_respawnPending[s])
                 {
-                    _respawnPending = -1;
+                    _respawnPending[s] = false;
                     RespawnFor(slot);
                 }
 
@@ -2602,9 +2635,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             // those on its own - that is the preview blinking out. Put it straight back.
             // No per-frame teleport. Re-placing a simulated entity every tick is what the client
             // choked on; it is put where it belongs when the selection changes and left alone.
-            if (!_spawnFailed && (_item is null || !_item.IsValid()) && now - _lastRebuild >= 1f)
+            if (!_spawnFailed[s] && (_item[s] is null || !_item[s].IsValid()) && now - _lastRebuild[s] >= 1f)
             {
-                _lastRebuild = now;
+                _lastRebuild[s] = now;
                 ShowItem(slot);
             }
         }
@@ -2614,6 +2647,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private void Open(IPlayerController controller)
     {
+        var s = new PlayerSlot(controller).AsPrimitive();
+
         if (_weapons.Count == 0)
         {
             _logger.LogWarning("Arsenal catalogue is empty - nothing to show");
@@ -2624,15 +2659,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var slot = new PlayerSlot(controller);
         var pawn = controller.GetPlayerPawn();
 
-        _owner        = slot.AsPrimitive();
-        _ownerAccount = controller.SteamId.AccountId;
+        _ownerAccount[s] = controller.SteamId.AccountId;
 
-        _yaw[_owner]  = StartYaw;
-        _zoom[_owner] = 1f;
-        _panH[_owner] = 0f;
-        _panV[_owner] = 0f;
-        _spawnFailed  = false;
-        _traceLog     = true;
+        _yaw[s]  = StartYaw;
+        _zoom[s] = 1f;
+        _panH[s] = 0f;
+        _panV[s] = 0f;
+        _spawnFailed[s]  = false;
+        _traceLog[s]     = true;
 
         if (pawn is not null && pawn.IsValid())
         {
@@ -2648,9 +2682,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
             var (yaw, clear) = FindClearDirection(eye, ang.Y);
 
-            _viewYaw   = yaw;
-            _clearance = clear;
-            _eye       = eye;
+            _viewYaw[s]   = yaw;
+            _clearance[s] = clear;
+            _eye[s]       = eye;
 
             _logger.LogInformation("presenting along yaw {yaw} with {clear} units clear (player faced {faced})",
                                    (int) yaw, (int) clear, (int) ang.Y);
@@ -2666,8 +2700,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 // cosmetic only
             }
 
-            _dressedPawn = pawn.Index;
-            HideHeldWeapons(pawn);
+            _dressedPawn[s] = pawn.Index;
+            HideHeldWeapons(pawn, s);
             SetPickup(pawn, false);
 
             // Take the pawn OUT OF THE WORLD for as long as the browser is open. Three separate
@@ -2704,15 +2738,17 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private void Close(PlayerSlot slot)
     {
+        var s = slot.AsPrimitive();
+
         AttachView(slot, null);
-        RestoreHeldWeapons();
+        RestoreHeldWeapons(s);
         DropRoom();
 
-        if (_lamp is not null && _lamp.IsValid())
+        if (_lamp[s] is not null && _lamp[s].IsValid())
         {
             try
             {
-                _lamp.Kill();
+                _lamp[s].Kill();
             }
             catch
             {
@@ -2720,7 +2756,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             }
         }
 
-        _lamp = null;
+        _lamp[s] = null;
 
 
         if (Pawn(slot) is { } owner)
@@ -2745,7 +2781,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
             }
         }
 
-        DropItem();   // the preview is scenery; it must not survive the menu
+        DropItem(s);   // the preview is scenery; it must not survive the menu
 
         foreach (var controller in _bridge.EntityManager.GetPlayerControllers())
         {
@@ -2775,7 +2811,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         Cls(slot, "root", "Closed", true);
         Layout()?.SetInputCaptureEnabled(slot, false);
         _open[slot.AsPrimitive()] = false;
-        _dressedPawn              = default;
+        _dressedPawn[s]              = default;
     }
 
     // ------------------------------------------------------------------ input
@@ -3040,14 +3076,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private ECommandAction OnCommandDist(StringCommand command)
     {
+        var s = FirstOpen();
+
         _logger.LogInformation("dist command: argc={n} raw='{raw}'", command.ArgCount,
                                command.ArgCount > 1 ? command.GetArg(1) : "");
 
         if (command.ArgCount > 1 && float.TryParse(command.GetArg(1), out var d))
         {
             _distOverride = d;
-            _logger.LogInformation("preview distance override = {d} (clearance {c})", d, (int) _clearance);
-            PlaceItem();
+            _logger.LogInformation("preview distance override = {d} (clearance {c})", d, (int) _clearance[s]);
+            PlaceItem(s);
         }
 
         return ECommandAction.Stopped;
@@ -3055,9 +3093,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private ECommandAction OnCommandLegacy(StringCommand command)
     {
+        var s = FirstOpen();
+
         _legacyBodygroup = !_legacyBodygroup;
         _logger.LogInformation("legacy bodygroup switch = {on}", _legacyBodygroup);
-        DropItem();
+        DropItem(s);
 
         return ECommandAction.Stopped;
     }
@@ -3121,7 +3161,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private ECommandAction OnCommandFindRoom(StringCommand command)
     {
-        var origin = _eye ?? new Vector(0f, 0f, 0f);
+        var s = FirstOpen();
+
+        var origin = _eye[s] ?? new Vector(0f, 0f, 0f);
 
         foreach (var cls in new[] { "point_camera", "info_player_counterterrorist",
                                     "info_player_terrorist", "sky_camera", "point_prefab",
@@ -3334,13 +3376,15 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     /// </summary>
     private void LightItem(PlayerSlot slot)
     {
-        if (!_lightOn || _item is null || !_item.IsValid())
+        var s = slot.AsPrimitive();
+
+        if (!_lightOn || _item[s] is null || !_item[s].IsValid())
         {
             return;
         }
 
-        var at = _item.GetAbsOrigin();
-        var yr = _viewYaw * MathF.PI / 180f;
+        var at = _item[s].GetAbsOrigin();
+        var yr = _viewYaw[s] * MathF.PI / 180f;
 
         // A barn light is a SPOT with a cone, so aim matters. The lamp sits between the camera
         // and the weapon and must face ALONG the view - facing viewYaw+180 pointed the cone back
@@ -3348,26 +3392,26 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var pos = new Vector(at.X - (MathF.Cos(yr) * 54f),
                              at.Y - (MathF.Sin(yr) * 54f),
                              at.Z + 26f);
-        var ang = new Vector(22f, _viewYaw, 0f);
+        var ang = new Vector(22f, _viewYaw[s], 0f);
 
-        if (_lamp is not null && _lamp.IsValid())
+        if (_lamp[s] is not null && _lamp[s].IsValid())
         {
             try
             {
-                _lamp.Teleport(pos, ang, null);
+                _lamp[s].Teleport(pos, ang, null);
             }
             catch
             {
-                _lamp = null;
+                _lamp[s] = null;
             }
 
             return;
         }
 
         // created, NOT spawned
-        _lamp = _bridge.EntityManager.CreateEntityByName("light_barn");
+        _lamp[s] = _bridge.EntityManager.CreateEntityByName("light_barn");
 
-        if (_lamp is null)
+        if (_lamp[s] is null)
         {
             _logger.LogWarning("light: could not create light_barn");
 
@@ -3376,12 +3420,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
         try
         {
-            _lamp.SetNetVar("m_bEnabled", false);
+            _lamp[s].SetNetVar("m_bEnabled", false);
 
             // Without a colour the light emits BLACK - CS2Fixes sets this and I had skipped it.
             try
             {
-                _lamp.SetNetVar("m_Color", new Color32(255, 250, 240, 255));
+                _lamp[s].SetNetVar("m_Color", new Color32(255, 250, 240, 255));
             }
             catch (Exception ex)
             {
@@ -3389,7 +3433,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
                 try
                 {
-                    _lamp.SetNetVar("m_Color", unchecked((int) 0xFFFFFAF0));
+                    _lamp[s].SetNetVar("m_Color", unchecked((int) 0xFFFFFAF0));
                 }
                 catch
                 {
@@ -3397,34 +3441,34 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 }
             }
 
-            _lamp.SetNetVar("m_flBrightness", 1.0f);
-            _lamp.SetNetVar("m_flRange", 2048.0f);
-            _lamp.SetNetVar("m_flSoftX", 1.0f);
-            _lamp.SetNetVar("m_flSoftY", 1.0f);
-            _lamp.SetNetVar("m_flSkirt", 0.5f);
-            _lamp.SetNetVar("m_flSkirtNear", 1.0f);
+            _lamp[s].SetNetVar("m_flBrightness", 1.0f);
+            _lamp[s].SetNetVar("m_flRange", 2048.0f);
+            _lamp[s].SetNetVar("m_flSoftX", 1.0f);
+            _lamp[s].SetNetVar("m_flSoftY", 1.0f);
+            _lamp[s].SetNetVar("m_flSkirt", 0.5f);
+            _lamp[s].SetNetVar("m_flSkirtNear", 1.0f);
             try
             {
-                _lamp.SetNetVar("m_vSizeParams", new Vector(45f, 45f, 0.02f));
+                _lamp[s].SetNetVar("m_vSizeParams", new Vector(45f, 45f, 0.02f));
             }
             catch (Exception ex)
             {
                 _logger.LogWarning("light: m_vSizeParams failed: {msg}", ex.Message);
             }
-            _lamp.SetNetVar("m_nCastShadows", 1);
-            _lamp.SetNetVar("m_nDirectLight", 3);
+            _lamp[s].SetNetVar("m_nCastShadows", 1);
+            _lamp[s].SetNetVar("m_nDirectLight", 3);
 
             // NOW spawn it, with the cookie - the schema prop is a resource handle, so it can
             // only be set this way
-            _lamp.DispatchSpawn(new Dictionary<string, KeyValuesVariantValueItem>
+            _lamp[s].DispatchSpawn(new Dictionary<string, KeyValuesVariantValueItem>
             {
                 ["targetname"]  = LampName,
                 ["lightcookie"] = "materials/effects/lightcookies/flashlight.vtex",
             });
 
-            _lamp.Teleport(pos, ang, null);
-            _lamp.SetNetVar("m_bEnabled", true);
-            _lamp.AcceptInput("Enable", null, null, 0, 0);
+            _lamp[s].Teleport(pos, ang, null);
+            _lamp[s].SetNetVar("m_bEnabled", true);
+            _lamp[s].AcceptInput("Enable", null, null, 0, 0);
 
             _logger.LogInformation("light: light_barn spawned at {x},{y},{z}",
                                    (int) pos.X, (int) pos.Y, (int) pos.Z);
@@ -3544,7 +3588,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private ECommandAction OnCommandSmoke(StringCommand command)
     {
-        if (_item is null || !_item.IsValid())
+        var s = FirstOpen();
+
+        if (_item[s] is null || !_item[s].IsValid())
         {
             _logger.LogInformation("control: open the browser first");
 
@@ -3566,18 +3612,18 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         var how = _smokeKind % 4;
         _smokeKind++;
 
-        var at = _item.GetAbsOrigin();
+        var at = _item[s].GetAbsOrigin();
         var spot = new Vector(at.X, at.Y, at.Z + 20f);
 
         // RecipientFilter exposes IsEmpty(), which means an empty one is a real possibility -
         // and an empty filter reaches NOBODY. Log what each one actually contains before
         // blaming the particle system.
         var fAll  = new RecipientFilter();
-        var fSlot = new PlayerSlot((byte) _owner);
+        var fSlot = new PlayerSlot((byte) s);
         var fOne  = new RecipientFilter(fSlot);
 
         _logger.LogInformation("filters: default empty={a}  slot({s}) empty={b}",
-                               fAll.IsEmpty(), _owner, fOne.IsEmpty());
+                               fAll.IsEmpty(), s, fOne.IsEmpty());
 
         try
         {
@@ -3592,13 +3638,13 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 case 1:   // position, filtered to the one player
                     _bridge.ParticleManager.DispatchParticleEffect(
                         fx, spot, new Vector(0f, 0f, 0f),
-                        new RecipientFilter(new PlayerSlot((byte) _owner)));
+                        new RecipientFilter(new PlayerSlot((byte) s)));
 
                     break;
 
                 case 2:   // attached to the weapon, broadcast
                     _bridge.ParticleManager.DispatchParticleEffect(
-                        fx, ParticleAttachmentType.AbsOrigin, _item, 0, false, new RecipientFilter());
+                        fx, ParticleAttachmentType.AbsOrigin, _item[s], 0, false, new RecipientFilter());
 
                     break;
 
@@ -3670,9 +3716,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
 
     private ECommandAction OnCommandFx(StringCommand command)
     {
-        if (_item is not null && _item.IsValid())
+        var s = FirstOpen();
+
+        if (_item[s] is not null && _item[s].IsValid())
         {
-            LightItem(new PlayerSlot((byte) _owner));
+            LightItem(new PlayerSlot((byte) s));
         }
 
         return ECommandAction.Stopped;

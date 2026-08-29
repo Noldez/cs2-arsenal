@@ -90,11 +90,15 @@ internal class Gloves : IArmoryService
 
         var refs = server.GetReferencesFromPointer(tokenAddress);
 
-        HashSet<nint> readers = [];
+        // Group by the FUNCTION the reference lives in, not by the reference itself. Several
+        // reads of the token inside one function are normal, and counting raw references made
+        // this bail with "expected one reader but got 6" after a CS2 update - so the pointer
+        // stayed null and gloves quietly stopped rendering correctly on spawn.
+        Dictionary<nint, nint> byFunction = [];
 
         foreach (var @ref in refs)
         {
-            if (!server.GetFunctionRange(@ref, out _, out _))
+            if (!server.GetFunctionRange(@ref, out var start, out _))
             {
                 continue;
             }
@@ -103,17 +107,23 @@ internal class Gloves : IArmoryService
 
             if (isRead && !isWritten)
             {
-                readers.Add(@ref);
+                byFunction.TryAdd(start, @ref);
             }
         }
 
-        if (readers.Count != 1)
+        if (byFunction.Count == 0)
         {
-            _logger.LogWarning("Expected one reader of first_or_third_person token but got {count}", readers.Count);
+            _logger.LogWarning("No read-only reader of the first_or_third_person token");
 
             return nint.Zero;
         }
 
-        return readers.First();
+        if (byFunction.Count > 1)
+        {
+            _logger.LogWarning("first_or_third_person token is read in {count} functions, taking the first",
+                               byFunction.Count);
+        }
+
+        return byFunction.Values.First();
     }
 }
