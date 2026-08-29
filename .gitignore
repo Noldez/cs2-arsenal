@@ -4,3 +4,4 @@ obj/
 items_game.txt
 csgo_english.txt
 __pycache__/
+lib/*.dll

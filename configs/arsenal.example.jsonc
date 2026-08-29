@@ -1,0 +1,14 @@
+// Copy to  game/sharp/configs/arsenal.jsonc  and fill in.
+// The real file is NOT in this repository and must never be: it carries the password
+// in plain text. Read once at start up, so an edit needs a server restart.
+{
+    // A blank MySQL instance is enough. The module creates the database and its tables
+    // on first init, so nothing has to be set up by hand.
+    "Database": {
+        "Host": "127.0.0.1",
+        "Port": 3306,
+        "Database": "arsenal",
+        "User": "arsenal",
+        "Password": ""
+    }
+}

@@ -220,6 +220,8 @@ fail, and was never retested against `s2r://`.
 ## Layout of this repository
 
 ```
+src/Arsenal.cs                 the module entry point and DI registration
+src/ArsenalConfig.cs           the config the entry point reads
 src/Modules/ArsenalMenu.cs     the browser
 src/Modules/WeaponSkins.cs     applies a saved skin on give
 src/Modules/Gloves.cs          applies saved gloves on spawn
@@ -239,9 +241,43 @@ tools/                         catalogue, icon, layout and room asset generators
 docs/                          how it works, and what does not
 ```
 
-This is the arsenal subsystem extracted from a larger plugin and published as a reference rather than
-a drop in build. It expects ModSharp's `InterfaceBridge` and a MySQL compatible database, and module
-registration and configuration live in the parent plugin.
+## Building it
+
+```bash
+# 1. Sharp.Shared.dll from a ModSharp master build (see lib/README.md)
+cp /path/to/Sharp.Shared.dll lib/
+
+# 2. the module
+dotnet build src/Arsenal.csproj -c Release
+
+# 3. the interface
+cd ui && resourcecompiler -nop4 -f -i <abs path>/layout/skins.xml
+         resourcecompiler -nop4 -f -i <abs path>/styles/skins.css
+```
+
+Then put things where the server looks for them:
+
+```
+Arsenal.dll            -> game/sharp/modules/Arsenal/
+skins.vxml_c           -> game/sharp/assets/panorama/layout/custom_game/
+skins.vcss_c           -> game/sharp/assets/panorama/styles/custom_game/
+econicons.vcss_c       -> game/sharp/assets/panorama/styles/custom_game/
+configs/arsenal.example.jsonc -> game/sharp/configs/arsenal.jsonc, filled in
+```
+
+A blank MySQL instance is all the database needs: the module creates the schema on first init.
+Module changes take a server restart; layout and stylesheet changes take a full CS2 restart on
+the client as well, because Panorama caches compiled layouts for the life of the process.
+
+**Clients need the interface too.** The layout, styles and images have to reach players, and on
+a server running arbitrary maps the way to do that is a published workshop addon. The server
+itself only needs the compiled model for the wardrobe; materials and textures are client side.
+
+## Notes
+
+This is the arsenal subsystem lifted out of a larger cosmetics plugin. What is here builds and
+runs on its own, but the parent plugin also carries agents, player models, a shop and a web
+facing refresh listener, none of which are in this repository, so the two entry points differ.
 
 ## Things that do not work
 
