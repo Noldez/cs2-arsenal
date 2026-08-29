@@ -12,15 +12,13 @@ collections and 11789 stickers, 1826 pins and 101 music kits, all read from CS2'
 load time.
 
 <p align="center">
-  <a href="docs/showcase.mp4">
-    <img src="docs/preview.gif" width="900"
-         alt="The browser cycling through finishes, stickers, a knife, gloves and a music kit, each previewed as a real item in the room">
-  </a>
+  <img src="docs/preview.gif" width="900"
+       alt="The browser cycling through finishes, stickers, a knife, gloves and a music kit, each previewed as a real item in the room">
 </p>
 
 <p align="center">
-  <a href="docs/showcase.mp4"><b>Full 80 second walkthrough</b></a> &nbsp;&middot;&nbsp; no commentary
-  &nbsp;&middot;&nbsp; weapons and finishes, knives, gloves, the sticker editor, pins, music kits
+  <sub>A finish change, the sticker editor, a knife, gloves and a music kit
+  &nbsp;&middot;&nbsp; every preview is the real item, standing in the room</sub>
 </p>
 
 ## What it does
