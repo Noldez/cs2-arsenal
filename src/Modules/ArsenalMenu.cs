@@ -362,6 +362,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private readonly uint[]   _ownerAccount = new uint[MaxSlots];
     private bool              _ownClass;
     private readonly float[]  _lastRebuild = new float[MaxSlots];
+    private readonly float[]  _lastRoom    = new float[MaxSlots];
 
     /// <summary>
     ///     The shortest gap between two preview builds. Clicks arriving inside it are collapsed
@@ -539,6 +540,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             _item[i]           = null;
             _lamp[i]           = null;
             _room[i]           = null;
+            _lastRoom[i]       = 0f;
             _showPending[i]    = false;
             _lastSpawn[i]      = 0f;
             _cam[i]            = null;
@@ -3114,6 +3116,15 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             Reassert(slot);
             PlaceCamera(slot);
 
+            // A round restart destroys every entity in the world, the wardrobe with it. The
+            // preview and the camera already rebuild themselves from here; the room did not, so
+            // the browser came back after a round with the weapon floating in open sky.
+            if ((_room[s] is null || !_room[s].IsValid()) && now - _lastRoom[s] >= 1f)
+            {
+                _lastRoom[s] = now;
+                PlaceRoom(slot);
+            }
+
             // Only the weapon and knife lists have a 3D preview, though. The rebuild below fires
             // whenever _item is null, which in the icon modes is always, so without this it
             // respawned the last weapon once a second and it flashed while you picked a pin.
@@ -3326,12 +3337,46 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
     private void OnClicked(IPlayerController player, ICustomHudLayout layout, string buttonId)
     {
-        if (_layout is null || !ReferenceEquals(layout, _layout))
+        // ADOPT the layout the click actually arrived on, do not insist it is the instance we
+        // cached. A round restart destroys and recreates the layout entity, so _layout goes on
+        // pointing at the old one while every click comes in on the new: ReferenceEquals then
+        // rejects all of them and the menu is drawn, lit, and completely dead. That is the
+        // "click 'btn_close' dropped: ours=True, same=False" spam.
+        //
+        // Identity is the RESOURCE, not the object reference. If it is our layout, it is ours,
+        // whichever instance the engine has handed us this round.
+        if (!ReferenceEquals(layout, _layout))
         {
-            _logger.LogWarning("click '{id}' dropped: ours={ours}, same={same}",
-                               buttonId, _layout is not null, ReferenceEquals(layout, _layout));
+            if (layout is null || !layout.IsValid()
+                || !string.Equals(layout.Layout, LayoutResource, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("click '{id}' dropped: not our layout ({res})",
+                                   buttonId, layout?.Layout ?? "<null>");
 
-            return;
+                return;
+            }
+
+            _logger.LogInformation("adopting the live layout instance (round restart?)");
+            _layout = layout;
+
+            // If the entity was genuinely RECREATED rather than merely re-wrapped, everything
+            // written into it is gone: dialog variables carry the text and class overrides carry
+            // every lit row, so the menu would come back working but blank. Re-push the lot for
+            // anyone browsing. Costs one refresh per round change and makes the question moot.
+            for (var i = 0; i < MaxSlots; i++)
+            {
+                if (!_open[i])
+                {
+                    continue;
+                }
+
+                var back = new PlayerSlot((byte) i);
+
+                Refresh(back);
+                Cls(back, "root", "Closed", false);
+                Cls(back, "root", "Open", true);
+                _layout.SetInputCaptureEnabled(back, true);
+            }
         }
 
         var slot = new PlayerSlot(player);
