@@ -28,6 +28,7 @@ load time.
 * Browse gloves, pins and music kits as 2D icons, drawn from the game's own econ art
 * Preview a music kit through the server's sound system, scoped to the one player listening
 * Equip a selection so it applies to the player's actual loadout
+* Present all of it inside a wardrobe of our own, so the backdrop is the same on every map
 * Light the preview with a runtime spotlight, so it works on maps with no usable lighting where it
   happens to stand
 
@@ -83,6 +84,29 @@ that and the path that works is whether the entity is new.
 Eight approaches were tested and falsified, each with server side confirmation that it really ran.
 [docs/PREVIEW.md](docs/PREVIEW.md) has the full table, including the econ view dumped from both paths
 and compared field by field. They are identical.
+
+### The wardrobe
+
+The preview stands in a room of our own rather than wherever the player happens to be. The room is
+a **model on a `prop_dynamic`**, not world geometry, which is the only thing that works on an
+arbitrary map: runtime `point_prefab` crashes the server, `-dual_addon` mounts an addon's files and
+not its geometry, and precaching is map load only.
+
+The player never moves. Only the view does:
+
+```csharp
+pawn.GetCameraService().ViewEntity = camera;
+```
+
+That is the mechanism CS2Fixes uses for `point_viewcontrol`. Binding the view rather than
+teleporting means no fall damage, no kill triggers, no position to restore, and nothing to get
+wrong when someone dies mid browse. It also means the room needs no physics hull, so an imported
+mesh works as it comes.
+
+[docs/WARDROBE.md](docs/WARDROBE.md) has the rest, including the two traps that cost the most time:
+Source applies its own metres to inches conversion on import, so a mesh already scaled to inches
+arrives forty times too large unless the `.vmdl` carries `import_scale = 0.0254`; and the compiler
+resolves a mesh's material from its base colour **texture** filename, not from the material name.
 
 ### Equipping
 
@@ -211,7 +235,7 @@ src/Data/                      schema and repository
 ui/layout/skins.xml            generated, do not edit by hand
 ui/styles/skins.css
 ui/styles/econicons.css        generated, one class per econ icon
-tools/                         catalogue, icon and layout generators
+tools/                         catalogue, icon, layout and room asset generators
 docs/                          how it works, and what does not
 ```
 

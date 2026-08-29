@@ -42,7 +42,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     ///     Backdrop model. A plain dev cube - it ships in pak01, is not map-specific, and we
     ///     precache it ourselves, so it resolves anywhere.
     /// </summary>
-    private const string RoomModel      = "models/dev/dev_cube.vmdl";
+    private const string RoomModel      = "models/cstema/wardrobe/room.vmdl";
 
     /// <summary>
     ///     Particle systems that carry a REAL light renderer, not just a glow sprite.
@@ -245,7 +245,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private ICustomHudLayout? _layout;
     private readonly IBaseWeapon?[] _item = new IBaseWeapon?[MaxSlots];
     private readonly IBaseEntity?[] _lamp = new IBaseEntity?[MaxSlots];
-    private readonly List<IBaseEntity> _roomParts = new();
+    private readonly IBaseEntity?[] _room = new IBaseEntity?[MaxSlots];
 
     /// <summary>Where the team-select prefab room sits on this map, found once per map load.</summary>
     private Vector?           _roomAnchor;
@@ -303,6 +303,24 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     /// </summary>
     private const float       VoidLift   = 420f;
     private const float       VoidSide   = 900f;
+
+    // The wardrobe model measures 260 x 173 x 93 and its origin is NOT centred: the
+    // interior runs x -62..199, y -86..86, z 0..92, and the single open face looks down
+    // its local +X. Anchoring the eye at +150 along that axis, looking back down it, puts
+    // the furnished wall in front of the view and the opening behind it, always.
+    private float             _roomFwd   = 150f;   // tuned in game 2026-08-29
+    private float             _roomUp    = 76f;    // eye height; ceiling is 92
+
+    // Which way the room is turned about the camera. 180 puts the model's local -X down the
+    // sight line; every 45 off that swings the view to the next wall.
+    private float             _roomYawOff = 90f;   // faces the radio wall
+
+    // Straight up from the player and well to the side. The pawn does NOT travel with it
+    // any more, so this only has to be somewhere map geometry does not poke into the room.
+    // The per-slot grid is pitched wider than the room is long so two browsers never
+    // share a space.
+    private const float       RoomLift   = 2400f;
+    private const float       RoomPitch  = 400f;
 
     /// <summary>
     ///     Below the map instead of above it. Up gives sky ambient and fog - lit, but not a
@@ -405,6 +423,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                                                   "Dispatch a visible particle to prove dispatch works");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_void", OnCommandVoid,
                                                   "Toggle the wardrobe between above and below the map");
+        _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomyaw", OnCommandRoomYaw,
+                                                  "Turn the wardrobe 45 degrees about the camera");
+        _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomup", OnCommandRoomUp,
+                                                  "Raise the camera inside the wardrobe");
+        _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomfwd", OnCommandRoomFwd,
+                                                  "Move the camera further back in the wardrobe");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_lighttoggle", OnCommandLightToggle,
                                                   "Toggle the preview light");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_fx", OnCommandFx,
@@ -452,6 +476,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_exposure");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_control");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_void");
+        _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomyaw");
+        _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomup");
+        _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomfwd");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_lighttoggle");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_build");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_fx");
@@ -477,6 +504,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         {
             _item[i]           = null;
             _lamp[i]           = null;
+            _room[i]           = null;
             _cam[i]            = null;
             _eye[i]            = null;
             _spawned[i]        = "";
@@ -1129,7 +1157,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         Pin(given);
         ShowOnlyTo(given, slot);
 
-        if (_useBooth && _roomParts.Count == 0)
+        if (_useBooth && _room[s] is null)
         {
             PlaceRoom(slot);
         }
@@ -1226,96 +1254,81 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             return;
         }
 
-        DropRoom();
+        DropRoom(s);
 
         var yr = _viewYaw[s] * MathF.PI / 180f;
-
-        // forward and right in view space, so the booth is built around the sight line
         var fx = MathF.Cos(yr);
         var fy = MathF.Sin(yr);
-        var rx = MathF.Sin(yr);
-        var ry = -MathF.Cos(yr);
 
-        var mid = new Vector(_eye[s].Value.X + (fx * (_roomBack * 0.5f)),
-                             _eye[s].Value.Y + (fy * (_roomBack * 0.5f)),
-                             _eye[s].Value.Z);
+        // Walk FORWARD from the eye to where the model's origin belongs, because the eye sits
+        // at local +RoomEyeFwd and the model is turned to face back at it.
+        var origin = new Vector(_eye[s].Value.X + (fx * _roomFwd),
+                                _eye[s].Value.Y + (fy * _roomFwd),
+                                _eye[s].Value.Z - _roomUp);
 
-        // back wall, both sides, floor and ceiling - the front is left open for the camera
-        var half = _roomBack * 0.5f;
-        var faces = new (float F, float R, float U)[]
+        var room = _bridge.EntityManager.SpawnEntitySync("prop_dynamic",
+                                                         new Dictionary<string, KeyValuesVariantValueItem>
+                                                         {
+                                                             ["targetname"]     = RoomName,
+                                                             ["model"]          = RoomModel,
+                                                             ["solid"]          = "0",
+                                                             ["disableshadows"] = "1",
+                                                         });
+
+        if (room is null)
         {
-            (half, 0f, 0f),      // back
-            (0f, half, 0f),      // right
-            (0f, -half, 0f),     // left
-            (0f, 0f, -half),     // floor
-            (0f, 0f, half),      // ceiling
-        };
+            _logger.LogWarning("wardrobe: could not spawn {model}", RoomModel);
 
-        foreach (var (f, r, u) in faces)
-        {
-            var panel = _bridge.EntityManager.SpawnEntitySync("prop_dynamic",
-                                                              new Dictionary<string, KeyValuesVariantValueItem>
-                                                              {
-                                                                  ["targetname"]     = RoomName,
-                                                                  ["model"]          = RoomModel,
-                                                                  ["solid"]          = "0",
-                                                                  ["disableshadows"] = "1",
-                                                              });
-
-            if (panel is null)
-            {
-                continue;
-            }
-
-            try
-            {
-                panel.SetMoveType(MoveType.None);
-                panel.SetSolid(SolidType.None);
-
-                if (panel is IBaseModelEntity m)
-                {
-                    m.SetModelScale(_roomScale);
-                }
-
-                panel.Teleport(new Vector(mid.X + (fx * f) + (rx * r),
-                                          mid.Y + (fy * f) + (ry * r),
-                                          mid.Z + u),
-                               new Vector(0f, _viewYaw[s], 0f),
-                               new Vector(0f, 0f, 0f));
-            }
-            catch
-            {
-                // a panel we cannot place is simply left out
-            }
-
-            ShowOnlyTo(panel, owner);
-            _roomParts.Add(panel);
+            return;
         }
 
-        _logger.LogInformation("wardrobe: {n} panels, scale {s}, half-size {h}",
-                               _roomParts.Count, _roomScale, (int) half);
-    }
+        try
+        {
+            // Never solid. The pawn is frozen and out of the world anyway, so the room needs no
+            // physics hull at all - which is the whole reason an imported mesh can be used as-is.
+            room.SetMoveType(MoveType.None);
+            room.SetSolid(SolidType.None);
+            room.Teleport(origin,
+                          new Vector(0f, _viewYaw[s] + _roomYawOff, 0f),
+                          new Vector(0f, 0f, 0f));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("wardrobe: could not place the room: {msg}", ex.Message);
+        }
 
-    private void DropRoom()
+        // scoped per receiver, so nobody else ever sees a room hanging over the level
+        ShowOnlyTo(room, owner);
+        _room[s] = room;
+
+        _logger.LogInformation("wardrobe: room at {x},{y},{z} yawOff {yaw} fwd {fwd} up {up}",
+                               (int) origin.X, (int) origin.Y, (int) origin.Z,
+                               (int) _roomYawOff, (int) _roomFwd, (int) _roomUp);    }
+
+    /// <summary>Tear down ONE player's wardrobe. Never touches anyone else's.</summary>
+    private void DropRoom(int s)
     {
-        foreach (var part in _roomParts)
-        {
-            ShowToEveryone(part);
+        var part = _room[s];
 
-            try
-            {
-                if (part.IsValid())
-                {
-                    part.Kill();
-                }
-            }
-            catch
-            {
-                // already gone
-            }
+        if (part is null)
+        {
+            return;
         }
 
-        _roomParts.Clear();
+        _room[s] = null;
+        ShowToEveryone(part);
+
+        try
+        {
+            if (part.IsValid())
+            {
+                part.Kill();
+            }
+        }
+        catch
+        {
+            // already gone
+        }
     }
 
     /// <summary>
@@ -3041,17 +3054,24 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 EnterRoom(slot, pawn);
             }
 
-            var eye = pawn.GetEyePosition();
-            var ang = pawn.GetEyeAngles();
+            // The pawn stays exactly where it is. Only the VIEW travels, because PlaceCamera
+            // binds it to a camera entity, so there is no teleport to undo, nothing to fall,
+            // no kill trigger to dodge and no position to restore if they die mid-browse.
+            // FindClearDirection is not needed either: the room IS the clearance now.
+            var home = pawn.GetAbsOrigin();
 
-            var (yaw, clear) = FindClearDirection(eye, ang.Y);
+            var anchor = new Vector(home.X + VoidSide + (s % 6 * RoomPitch),
+                                    home.Y + VoidSide + (s / 6 * RoomPitch),
+                                    home.Z + (_voidDown ? -RoomLift : RoomLift));
 
-            _viewYaw[s]   = yaw;
-            _clearance[s] = clear;
-            _eye[s]       = eye;
+            _viewYaw[s]   = 0f;
+            _clearance[s] = _roomBack;
+            _eye[s]       = anchor;
 
-            _logger.LogInformation("presenting along yaw {yaw} with {clear} units clear (player faced {faced})",
-                                   (int) yaw, (int) clear, (int) ang.Y);
+            _logger.LogInformation("wardrobe: slot {s} anchored at {x},{y},{z} (pawn stays put)",
+                                   s, (int) anchor.X, (int) anchor.Y, (int) anchor.Z);
+
+            PlaceRoom(slot);
 
             try
             {
@@ -3108,7 +3128,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         AttachView(slot, null);
         RestoreHeldWeapons(s);
-        DropRoom();
+        DropRoom(s);
 
         if (_lamp[s] is not null && _lamp[s].IsValid())
         {
@@ -4079,6 +4099,57 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         {
             _logger.LogWarning("control shape {how} threw: {msg}", how, ex.Message);
         }
+
+        return ECommandAction.Stopped;
+    }
+
+    /// <summary>Re-place the wardrobe for everyone browsing, so a tweak lands immediately.</summary>
+    private void RepaintRooms()
+    {
+        for (var i = 0; i < MaxSlots; i++)
+        {
+            if (_open[i] && _eye[i] is not null)
+            {
+                PlaceRoom(new PlayerSlot((byte) i));
+            }
+        }
+    }
+
+    private ECommandAction OnCommandRoomYaw(StringCommand command)
+    {
+        _roomYawOff = (_roomYawOff + 45f) % 360f;
+        _logger.LogInformation("wardrobe yaw offset: {v}", (int) _roomYawOff);
+        RepaintRooms();
+
+        return ECommandAction.Stopped;
+    }
+
+    private ECommandAction OnCommandRoomUp(StringCommand command)
+    {
+        _roomUp += 8f;
+
+        if (_roomUp > 88f)
+        {
+            _roomUp = 12f;
+        }
+
+        _logger.LogInformation("wardrobe eye height: {v}", (int) _roomUp);
+        RepaintRooms();
+
+        return ECommandAction.Stopped;
+    }
+
+    private ECommandAction OnCommandRoomFwd(StringCommand command)
+    {
+        _roomFwd += 25f;
+
+        if (_roomFwd > 260f)
+        {
+            _roomFwd = 60f;
+        }
+
+        _logger.LogInformation("wardrobe camera set back: {v}", (int) _roomFwd);
+        RepaintRooms();
 
         return ECommandAction.Stopped;
     }
