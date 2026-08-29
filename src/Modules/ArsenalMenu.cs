@@ -2110,10 +2110,18 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _spawned[s]     = "";
         _dressedPawn[s] = default;
 
+        // Deliberately NOT Layout() here. That call CREATES the layout if it does not exist, so
+        // touching it at connect time built it earlier than it used to be and left the click
+        // handler holding a different instance than the one clicks arrive on - every click was
+        // then dropped by the identity guard in OnClicked. Only release what already exists.
+        if (_layout is null)
+        {
+            return;
+        }
+
         try
         {
-            Layout()?.SetInputCaptureEnabled(slot, false);
-            Cls(slot, "root", "Closed", true);
+            _layout.SetInputCaptureEnabled(slot, false);
         }
         catch (Exception ex)
         {
@@ -2871,6 +2879,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         if (_layout is null || !ReferenceEquals(layout, _layout))
         {
+            _logger.LogWarning("click '{id}' dropped: ours={ours}, same={same}",
+                               buttonId, _layout is not null, ReferenceEquals(layout, _layout));
+
             return;
         }
 
