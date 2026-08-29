@@ -90,15 +90,11 @@ internal class Gloves : IArmoryService
 
         var refs = server.GetReferencesFromPointer(tokenAddress);
 
-        // Group by the FUNCTION the reference lives in, not by the reference itself. Several
-        // reads of the token inside one function are normal, and counting raw references made
-        // this bail with "expected one reader but got 6" after a CS2 update - so the pointer
-        // stayed null and gloves quietly stopped rendering correctly on spawn.
-        Dictionary<nint, nint> byFunction = [];
+        HashSet<nint> readers = [];
 
         foreach (var @ref in refs)
         {
-            if (!server.GetFunctionRange(@ref, out var start, out _))
+            if (!server.GetFunctionRange(@ref, out _, out _))
             {
                 continue;
             }
@@ -107,23 +103,26 @@ internal class Gloves : IArmoryService
 
             if (isRead && !isWritten)
             {
-                byFunction.TryAdd(start, @ref);
+                readers.Add(@ref);
             }
         }
 
-        if (byFunction.Count == 0)
+        // DO NOT relax this to "take the first match". Tested 2026-08-29: grouping the readers by
+        // their enclosing function and taking the first made the scan resolve again, and then
+        // SetGlovesBodyGroup was called on every spawn with an address that is not it. Players
+        // could no longer pick a team, because spawning was broken. Ariiisu/WeaponSkin does take
+        // the first, and it may be right on their build, but it is wrong on ours.
+        //
+        // Refusing is the safe failure: gloves may not render perfectly, and everything else works.
+        // The real fix is a gamedata signature, not a cleverer heuristic. See issue #8.
+        if (readers.Count != 1)
         {
-            _logger.LogWarning("No read-only reader of the first_or_third_person token");
+            _logger.LogWarning("Expected one reader of first_or_third_person token but got {count}, "
+                               + "gloves will not use SetGlovesBodyGroup", readers.Count);
 
             return nint.Zero;
         }
 
-        if (byFunction.Count > 1)
-        {
-            _logger.LogWarning("first_or_third_person token is read in {count} functions, taking the first",
-                               byFunction.Count);
-        }
-
-        return byFunction.Values.First();
+        return readers.First();
     }
 }

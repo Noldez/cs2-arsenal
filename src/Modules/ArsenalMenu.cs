@@ -9,6 +9,7 @@ using Sharp.Shared.GameEntities;
 using Sharp.Shared.GameObjects;
 using Sharp.Shared.Listeners;
 using Sharp.Shared.Managers;
+using Sharp.Shared.Objects;
 using Sharp.Shared.Types;
 using Sharp.Shared.Units;
 
@@ -26,7 +27,7 @@ namespace Armory.Modules;
 ///     system uses - that code resolves a raw engine function and writes through a schema offset,
 ///     so it must exist exactly once.
 /// </summary>
-internal sealed class ArsenalMenu : IArmoryService, IGameListener
+internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListener
 {
     private const string LayoutResource = "panorama/layout/custom_game/skins.vxml_c";
     private const string LayoutName     = "armory_arsenal";
@@ -339,7 +340,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         _logger    = logger;
     }
 
-    public int ListenerVersion  => IGameListener.ApiVersion;
+    int IGameListener.ListenerVersion   => IGameListener.ApiVersion;
+    int IClientListener.ListenerVersion => IClientListener.ApiVersion;
     public int ListenerPriority => 0;
 
     public bool Init()
@@ -378,6 +380,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         _bridge.HookManager.PlayerCanAcquire.InstallHookPre(OnCanAcquirePre);
         _customHud.InstallClickListener(OnClicked);
         _bridge.ModSharp.InstallGameListener(this);
+        _bridge.ClientManager.InstallClientListener(this);
         _bridge.ModSharp.InstallGameFrameHook(null, OnFramePost);
 
         return true;
@@ -403,6 +406,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         _bridge.HookManager.PlayerCanAcquire.RemoveHookPre(OnCanAcquirePre);
         _customHud.RemoveClickListener(OnClicked);
         _bridge.ModSharp.RemoveGameListener(this);
+        _bridge.ClientManager.RemoveClientListener(this);
         _bridge.ModSharp.RemoveGameFrameHook(null, OnFramePost);
     }
 
@@ -2086,6 +2090,56 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         });
 
         Refresh(slot);
+    }
+
+    /// <summary>
+    ///     A slot is never inherited. Whoever connects into it starts with the browser shut and no
+    ///     input capture held, whatever the last occupant left behind. Without this a stale capture
+    ///     swallows every click the new player makes, including team select, which looks like the
+    ///     game itself being broken rather than the plugin.
+    /// </summary>
+    public void OnClientPutInServer(IGameClient client)
+    {
+        var slot = client.Slot;
+        var s    = slot.AsPrimitive();
+
+        _open[s]        = false;
+        _stickerMode[s] = false;
+        _gloveMode[s]   = false;
+        _spawnFailed[s] = false;
+        _spawned[s]     = "";
+        _dressedPawn[s] = default;
+
+        try
+        {
+            Layout()?.SetInputCaptureEnabled(slot, false);
+            Cls(slot, "root", "Closed", true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("could not release the layout for slot {s}: {msg}", s, ex.Message);
+        }
+    }
+
+    /// <summary>
+    ///     Tear the browser down when its owner leaves. The preview and the lamp are entities in
+    ///     the world; without this they outlive the player who asked for them.
+    /// </summary>
+    public void OnClientDisconnected(IGameClient client, NetworkDisconnectionReason reason)
+    {
+        var slot = client.Slot;
+        var s    = slot.AsPrimitive();
+
+        if (_open[s])
+        {
+            _logger.LogInformation("slot {s} left with the arsenal open, closing it", s);
+            Close(slot);
+        }
+
+        DropItem(s);
+        KillLamp(s);
+        _hiddenWeapons[s].Clear();
+        _open[s] = false;
     }
 
     /// <summary>
