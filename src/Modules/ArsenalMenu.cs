@@ -57,6 +57,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     ///     effect is a temporary entity, so the particle's own lifecycle is what decides whether
     ///     it lingers. This one has the decay and fade ramp removed and a near-infinite lifespan.
     /// </summary>
+    private const string LightCookie = "materials/effects/lightcookies/flashlight.vtex";
+
     private const string LightFx   = "particles/armory/wardrobe_light.vpcf";
 
     /// <summary>Loudly visible, purely to prove whether dispatch works at all.</summary>
@@ -360,6 +362,27 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private readonly uint[]   _ownerAccount = new uint[MaxSlots];
     private bool              _ownClass;
     private readonly float[]  _lastRebuild = new float[MaxSlots];
+
+    /// <summary>
+    ///     The shortest gap between two preview builds. Clicks arriving inside it are collapsed
+    ///     into one build of whatever is selected when it expires.
+    /// </summary>
+    private const    float    SpawnGap     = 0.12f;
+
+    /// <summary>
+    ///     Previews waiting to be destroyed, with the time they may be. Never kill an entity in
+    ///     the frame that spawned its replacement: the slot is handed straight back and anything
+    ///     still holding the old one is now looking at the new one.
+    /// </summary>
+    private const    float    KillDelay    = 0.30f;
+
+    // Bisect switches. All false = normal behaviour.
+    private bool _noScope;
+    private bool _noPaint;
+    private bool _noPin;
+    private readonly List<(IBaseEntity Entity, float Due)> _pendingKill = new();
+    private readonly float[]  _lastSpawn   = new float[MaxSlots];
+    private readonly bool[]   _showPending = new bool[MaxSlots];
     /// <summary>
     ///     The preview light. Worth knowing: a long hunt for a "pulsing" light turned out to be
     ///     the MAP - cosmic_princess_kaguya animates its own lighting - not this particle. Bisect
@@ -425,6 +448,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                                                   "Toggle the wardrobe between above and below the map");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomyaw", OnCommandRoomYaw,
                                                   "Turn the wardrobe 45 degrees about the camera");
+        _bridge.ConVarManager.CreateServerCommand("armory_t_scope", OnCommandNoScope,
+                                                  "BISECT: skip ShowOnlyTo on the preview");
+        _bridge.ConVarManager.CreateServerCommand("armory_t_paint", OnCommandNoPaint,
+                                                  "BISECT: skip Paint on the preview");
+        _bridge.ConVarManager.CreateServerCommand("armory_t_pin", OnCommandNoPin,
+                                                  "BISECT: skip Pin on the preview");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomup", OnCommandRoomUp,
                                                   "Raise the camera inside the wardrobe");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_roomfwd", OnCommandRoomFwd,
@@ -477,6 +506,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_control");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_void");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomyaw");
+        _bridge.ConVarManager.ReleaseCommand("armory_t_scope");
+        _bridge.ConVarManager.ReleaseCommand("armory_t_paint");
+        _bridge.ConVarManager.ReleaseCommand("armory_t_pin");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomup");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_roomfwd");
         _bridge.ConVarManager.ReleaseCommand("armory_arsenal_lighttoggle");
@@ -496,6 +528,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         _layout = null;
 
+        ClearPendingKills();
+
         // A map change destroys every entity in the world, so holding references to any of them
         // is holding references to nothing. Clear the LOT, not just the preview: a half reset
         // leaves the browser believing it is open for someone on a map where it never opened,
@@ -505,6 +539,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             _item[i]           = null;
             _lamp[i]           = null;
             _room[i]           = null;
+            _showPending[i]    = false;
+            _lastSpawn[i]      = 0f;
             _cam[i]            = null;
             _eye[i]            = null;
             _spawned[i]        = "";
@@ -1023,6 +1059,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var paint  = list.Length > 0 && _fsel[s] < list.Length ? list[_fsel[s]].Paint : 0;
         var key    = wanted + "|" + paint + "|" + StickerKey(s);
 
+        // Coalesce clicks. Anything arriving inside SpawnGap only records that a build is owed;
+        // the frame hook performs it once the gap has passed, for whatever is selected BY THEN.
+        // Holding an arrow key therefore costs one entity, not forty.
+        var nowT = _bridge.ModSharp.GetGlobals().CurTime;
+
+        _lastSpawn[s]   = nowT;
+        _showPending[s] = false;
+
         // The paint MUST be on the item view before the entity networks to the client - the
         // loadout system applies skins in the give-item hook for exactly this reason. Writing
         // attributes onto an already-networked weapon changes nothing on screen, which is why
@@ -1086,7 +1130,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                         given           = built;
                         _item[s]           = built;
                         _builtOurselves[s] = true;
-                        Paint(slot);
+
+                        if (!_noPaint)
+                        {
+                            Paint(slot);
+                        }
 
                         _logger.LogInformation("spawned {weapon} as {cls} subclass {def}, no give",
                                                wanted, SpawnClass(wanted), def);
@@ -1154,8 +1202,24 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         // NOT RemovePlayerItem or SetOwner(null) here: both invalidate the entity the drop just
         // built, the tick then sees the preview missing and rebuilds it, and that runs away into a
         // give/drop every frame - an endless stream of equip sounds and nothing on screen.
-        Pin(given);
-        ShowOnlyTo(given, slot);
+        if (!_noPin)
+        {
+            Pin(given);
+        }
+
+        // NOT ShowOnlyTo. Arming a per-entity transmit hook on every rebuild is what has been
+        // killing servers since the give-and-drop days (issue #7) - a segfault on the lab,
+        // "stack smashing detected" on CSTEMA.LT. Proven by elimination: skip this one call and
+        // the same abuse that crashed it four times does nothing. Making removal unconditional
+        // did not help, so it is the ARMING, not the leak.
+        //
+        // The preview is hidden from everyone else by WHERE it is instead: the wardrobe sits
+        // below the map, so world geometry occludes it. The room itself is still scoped, but
+        // that is one hook per browsing session rather than one per click.
+        if (!_noScope)
+        {
+            ShowOnlyTo(given, slot);
+        }
 
         if (_useBooth && _room[s] is null)
         {
@@ -1538,7 +1602,10 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         try
         {
-            _bridge.TransmitManager.AddEntityHooks(entity, true);
+            // defaultTransmit FALSE: hidden from everyone, then switched on for the owner alone.
+            // Fail closed - a receiver we never get to cannot see it - and it is the pattern
+            // ModSharp's own consumers use.
+            _bridge.TransmitManager.AddEntityHooks(entity, false);
 
             foreach (var c in _bridge.EntityManager.GetPlayerControllers())
             {
@@ -1547,14 +1614,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                     continue;
                 }
 
-                var slot = new PlayerSlot(c);
-
-                if (slot == owner || c.GetPlayerPawn() is not { } pawn || !pawn.IsValid())
-                {
-                    continue;
-                }
-
-                _bridge.TransmitManager.SetEntityState(entity.Index, pawn.Index, false, 0);
+                // THE SECOND ARGUMENT IS A CONTROLLER INDEX, NOT A PAWN INDEX.
+                // This passed pawn.Index for months. Controllers sit at low entity indices and
+                // pawns at much higher ones, so every scoped preview wrote visibility state past
+                // the end of the receiver table. That is what killed two servers - a segfault on
+                // the lab, "stack smashing detected" on CSTEMA.LT - and why skipping this whole
+                // method was the only thing that stopped it. The bug was never ModSharp's.
+                _bridge.TransmitManager.SetEntityState(entity.Index, c.Index,
+                                                       new PlayerSlot(c) == owner, -1);
             }
         }
         catch (Exception ex)
@@ -1573,12 +1640,17 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         try
         {
-            // order matters, and only ever on an entity that is still alive and hooked
+            // Order matters. The removal is NOT gated on IsEntityHooked any more: if that ever
+            // answers false for an entity we did hook, the hook goes to the grave with it and
+            // leaks. They accumulate one per preview rebuild, and a full table is what took two
+            // servers down - a segfault on one, "stack smashing detected" on the other. Removing
+            // a hook that is not there is harmless; leaving one that is, is not.
             if (_bridge.TransmitManager.IsEntityHooked(entity))
             {
                 _bridge.TransmitManager.ClearReceiverState(entity.Index);
-                _bridge.TransmitManager.RemoveEntityHooks(entity);
             }
+
+            _bridge.TransmitManager.RemoveEntityHooks(entity);
         }
         catch
         {
@@ -1834,7 +1906,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         try
         {
-            _bridge.TransmitManager.AddEntityHooks(pawn, true);
+            // second argument is a CONTROLLER index. See ShowOnlyTo.
+            _bridge.TransmitManager.AddEntityHooks(pawn, false);
 
             foreach (var c in _bridge.EntityManager.GetPlayerControllers())
             {
@@ -1843,12 +1916,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                     continue;
                 }
 
-                if (new PlayerSlot(c) == owner || c.GetPlayerPawn() is not { } other || !other.IsValid())
+                if (new PlayerSlot(c) != owner)
                 {
                     continue;
                 }
 
-                _bridge.TransmitManager.SetEntityState(pawn.Index, other.Index, false, 0);
+                _bridge.TransmitManager.SetEntityState(pawn.Index, c.Index, false, -1);
             }
         }
         catch (Exception ex)
@@ -2493,7 +2566,13 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
     private void DropItem(int s)
     {
-        ShowToEveryone(_item[s]);
+        // Killed here, not deferred: deferring only left the outgoing weapon standing in the
+        // shot, which read as a default-skinned copy overlapping the painted one.
+        //
+        // And deliberately NOT unhooked first. Nothing else that uses ITransmitManager tears a
+        // hook down by hand - the hook is expected to go with the entity. Doing it ourselves, on
+        // an entity destroyed microseconds later whose index is immediately reused, is the one
+        // thing our usage did that everyone else's does not.
 
         if (_item[s] is not null && _item[s].IsValid())
         {
@@ -2510,6 +2589,39 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _item[s]    = null;
         _spawned[s] = "";
     }
+
+    /// <summary>Destroy the previews whose grace period has passed. Frame hook only.</summary>
+    private void RunPendingKills(float now)
+    {
+        for (var i = _pendingKill.Count - 1; i >= 0; i--)
+        {
+            var (entity, due) = _pendingKill[i];
+
+            if (now < due)
+            {
+                continue;
+            }
+
+            _pendingKill.RemoveAt(i);
+            ShowToEveryone(entity);
+
+            try
+            {
+                if (entity.IsValid())
+                {
+                    entity.Kill();
+                }
+            }
+            catch
+            {
+                // already gone
+            }
+        }
+    }
+
+    /// <summary>Nothing may outlive a map change: every entity is destroyed with the level.</summary>
+    private void ClearPendingKills()
+        => _pendingKill.Clear();
 
     private void Paint(PlayerSlot slot)
     {
@@ -2970,6 +3082,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         var now = _bridge.ModSharp.GetGlobals().CurTime;
 
+        RunPendingKills(now);
+
         for (var s = 0; s < MaxSlots; s++)
         {
             if (!_open[s])
@@ -3015,6 +3129,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             if (!_spawnFailed[s] && (_item[s] is null || !_item[s].IsValid()) && now - _lastRebuild[s] >= 1f)
             {
                 _lastRebuild[s] = now;
+                ShowItem(slot);
+
+                continue;
+            }
+
+            // a build was asked for while the gate was shut; do it now that it is open
+            if (_showPending[s] && now - _lastSpawn[s] >= SpawnGap)
+            {
                 ShowItem(slot);
             }
         }
@@ -3062,7 +3184,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
             var anchor = new Vector(home.X + VoidSide + (s % 6 * RoomPitch),
                                     home.Y + VoidSide + (s / 6 * RoomPitch),
-                                    home.Z + (_voidDown ? -RoomLift : RoomLift));
+                                    home.Z + RoomLift);
 
             _viewYaw[s]   = 0f;
             _clearance[s] = _roomBack;
@@ -3705,7 +3827,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             lamp.DispatchSpawn(new Dictionary<string, KeyValuesVariantValueItem>
             {
                 ["targetname"]  = "armory_flashlight",
-                ["lightcookie"] = "materials/effects/lightcookies/flashlight.vtex",
+                ["lightcookie"] = HasResource(LightCookie) ? LightCookie : string.Empty,
             });
         }
         catch (Exception ex)
@@ -3787,6 +3909,39 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     ///     and lights nothing. lightcookie has to go through keyvalues because the schema prop is
     ///     a resource handle.
     /// </summary>
+    /// <summary>
+    ///     Can this install actually resolve that resource? Asked through Valve's own filesystem,
+    ///     so the VPKs are searched and a stock asset inside pak01 answers true.
+    ///     <br /><br />
+    ///     Cached, because it is asked on every preview light and the answer cannot change while
+    ///     the process is up.
+    /// </summary>
+    private bool HasResource(string path)
+    {
+        if (_resourceExists.TryGetValue(path, out var known))
+        {
+            return known;
+        }
+
+        var exists = false;
+
+        try
+        {
+            using var file = _bridge.FileManager.OpenFile(path);
+            exists = file is not null && file.Size() > 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("could not probe {path}: {msg}", path, ex.Message);
+        }
+
+        _resourceExists[path] = exists;
+
+        return exists;
+    }
+
+    private readonly Dictionary<string, bool> _resourceExists = new(StringComparer.OrdinalIgnoreCase);
+
     private void LightItem(PlayerSlot slot)
     {
         var s = slot.AsPrimitive();
@@ -3872,12 +4027,29 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             _lamp[s].SetNetVar("m_nDirectLight", 3);
 
             // NOW spawn it, with the cookie - the schema prop is a resource handle, so it can
-            // only be set this way
-            _lamp[s].DispatchSpawn(new Dictionary<string, KeyValuesVariantValueItem>
+            // only be set this way.
+            //
+            // But ONLY if the install actually has it. lightcookie is a resource handle, so a
+            // path that resolves to nothing hands the engine a dead handle instead of failing,
+            // and the process dies on a smashed stack a moment later with nothing pointing back
+            // here. That is how CSTEMA.LT went down. The cookie ships inside pak01, so this is
+            // false only on an install missing content - rare, and worth surviving.
+            var spawnKeys = new Dictionary<string, KeyValuesVariantValueItem>
             {
-                ["targetname"]  = LampName,
-                ["lightcookie"] = "materials/effects/lightcookies/flashlight.vtex",
-            });
+                ["targetname"] = LampName,
+            };
+
+            if (HasResource(LightCookie))
+            {
+                spawnKeys["lightcookie"] = LightCookie;
+            }
+            else
+            {
+                _logger.LogWarning("light: {cookie} does not resolve on this install, "
+                                 + "spawning the lamp without a cookie", LightCookie);
+            }
+
+            _lamp[s].DispatchSpawn(spawnKeys);
 
             _lamp[s].Teleport(pos, ang, null);
             _lamp[s].SetNetVar("m_bEnabled", true);
@@ -4113,6 +4285,30 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 PlaceRoom(new PlayerSlot((byte) i));
             }
         }
+    }
+
+    private ECommandAction OnCommandNoScope(StringCommand command)
+    {
+        _noScope = !_noScope;
+        _logger.LogInformation("BISECT ShowOnlyTo: {v}", _noScope ? "SKIPPED" : "on");
+
+        return ECommandAction.Stopped;
+    }
+
+    private ECommandAction OnCommandNoPaint(StringCommand command)
+    {
+        _noPaint = !_noPaint;
+        _logger.LogInformation("BISECT Paint: {v}", _noPaint ? "SKIPPED" : "on");
+
+        return ECommandAction.Stopped;
+    }
+
+    private ECommandAction OnCommandNoPin(StringCommand command)
+    {
+        _noPin = !_noPin;
+        _logger.LogInformation("BISECT Pin: {v}", _noPin ? "SKIPPED" : "on");
+
+        return ECommandAction.Stopped;
     }
 
     private ECommandAction OnCommandRoomYaw(StringCommand command)

@@ -296,6 +296,8 @@ Recorded so they are not attempted again. Each was tested, not assumed.
 * `UTIL_DispatchParticleEffect`, a broken signature on Linux that no ops silently. Spawn an
   `info_particle_system` entity instead.
 * Runtime `point_prefab`, which crashes the server. Spawn groups are load time only.
+* Removing a transmit hook by hand from an entity you are about to destroy. It crashed two
+  servers for months. See [docs/TRANSMIT.md](docs/TRANSMIT.md).
 
 ## Compatibility
 
