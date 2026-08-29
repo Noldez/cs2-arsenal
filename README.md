@@ -263,15 +263,14 @@ Recorded so they are not attempted again. Each was tested, not assumed.
 
 ## Compatibility
 
-The interface is built on ModSharp's `custom_hud_layout` support, which lives on the open pull
-request [Kxnrl/modsharp-public#123](https://github.com/Kxnrl/modsharp-public/pull/123) and is not
-in `master` yet. Build against `Sharp.Shared.dll` from that branch, or from its CI artifact, and
-run the matching runtime; the API and the native library have to come from the same revision.
+The interface is built on ModSharp's `custom_hud_layout` support, which is **in `master` as of
+29 August 2026**. It was merged from what used to be an open pull request, so a fork is no longer
+needed: build against `Sharp.Shared.dll` from master and run the matching runtime. The API and the
+native library still have to come from the same revision.
 
-The branch is under active development and does rename things, so expect small breaks when you
-update. Moving from the 27 August snapshot to the 29 August head cost exactly three renames:
-`ICustomHudManager` to `IPanoramaManager`, `GetCustomHudManager` to `GetPanoramaManager`, and the
-class override enum `Present`/`Absent` to `ForceEnable`/`ForceDisable`.
+`master` provides `IPanoramaManager` (via `GetPanoramaManager`), `ICustomHudLayout`, and the class
+override enum `ForceEnable`/`ForceDisable`. If you are coming from a pre-merge snapshot of the
+branch, those were previously `ICustomHudManager`, `GetCustomHudManager`, and `Present`/`Absent`.
 
 `master` also has a separate script interop API (`IScriptManager`) that bridges C# to CS2's
 `cs_script` V8 VM. It is **not** a replacement for this. cs_script runs from a `point_script`
