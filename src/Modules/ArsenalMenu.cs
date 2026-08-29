@@ -118,7 +118,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private sealed record Finish(int Paint, string Name, int Rarity);
 
     private readonly InterfaceBridge      _bridge;
-    private readonly ICustomHudManager    _customHud;
+    private readonly IPanoramaManager    _customHud;
     private readonly ISkinApplier         _applier;
     private readonly ILogger<ArsenalMenu> _logger;
 
@@ -339,7 +339,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _store    = store;
         _commands = commands;
         _bridge    = bridge;
-        _customHud = sharedSystem.GetCustomHudManager();
+        _customHud = sharedSystem.GetPanoramaManager();
         _applier   = applier;
         _logger    = logger;
     }
@@ -378,6 +378,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                                                   "Spawn a test light (cycles classnames)");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_build", OnCommandBuild,
                                                   "Toggle spawning the preview vs giving and dropping it");
+        _bridge.ConVarManager.CreateServerCommand("armory_script_probe", OnCommandScriptProbe,
+                                                  "Spawn a point_script at runtime to see if cs_script runs");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_knife", OnCommandProbe,
                                                   "Drop a bare knife at the preview spot");
 
@@ -735,7 +737,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
     private void Cls(PlayerSlot slot, string panel, string name, bool on)
         => Layout()?.SetClassOverrideForPlayer(slot, panel, name,
-                                               on ? CustomHudClassOverride.Present : CustomHudClassOverride.Absent);
+                                               on ? HudPanelClassStatus.ForceEnable : HudPanelClassStatus.ForceDisable);
 
     private void Txt(PlayerSlot slot, string panel, string value)
         => Layout()?.SetDialogVariableStringForPlayer(slot, panel, "v", value);
@@ -3856,6 +3858,76 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     {
         _buildOurselves = !_buildOurselves;
         _logger.LogInformation("spawn the preview ourselves: {s}", _buildOurselves ? "ON" : "OFF");
+
+        return ECommandAction.Stopped;
+    }
+
+    /// <summary>
+    ///     Can cs_script be made to run on a map we do not own?
+    ///     <br /><br />
+    ///     This decides whether the interface can move to the script VM at all. cs_script normally
+    ///     runs from a point_script entity placed in the map, and we run arbitrary workshop maps.
+    ///     If a point_script spawned at runtime loads and runs its script, the route is open on any
+    ///     map. If it does not, the script VM is only available on maps we author, and porting the
+    ///     interface to it would mean shipping our own map.
+    /// </summary>
+    private ECommandAction OnCommandScriptProbe(StringCommand command)
+    {
+        // .vjs_c, not .js: cs_script compiles like any other resource, exactly as the layout
+        // compiles to .vxml_c. A raw .js was never going to run.
+        // The light_barn lesson: create unspawned, write, THEN DispatchSpawn. Try that shape too
+        // before concluding the VM cannot be reached at runtime.
+        foreach (var kv in new[] { "script", "scriptfile", "vscripts" })
+        {
+            try
+            {
+                var e = _bridge.EntityManager.CreateEntityByName("point_script");
+
+                if (e is null)
+                {
+                    _logger.LogWarning("script probe: CreateEntityByName(point_script) returned null");
+
+                    break;
+                }
+
+                e.DispatchSpawn(new Dictionary<string, KeyValuesVariantValueItem>
+                {
+                    [kv] = "maps/scripts/hello.vjs_c",
+                });
+
+                e.AcceptInput("Enable", null, null, 0, 0);
+                e.AcceptInput("Reload", null, null, 0, 0);
+
+                _logger.LogInformation("script probe: deferred spawn with '{kv}' -> #{i}", kv, e.Index);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("script probe: deferred '{kv}' threw: {msg}", kv, ex.Message);
+            }
+        }
+
+        foreach (var script in new[]
+                 {
+                     "maps/scripts/hello.vjs_c", "maps/scripts/hello", "scripts/hello.vjs_c",
+                 })
+        {
+            try
+            {
+                var e = _bridge.EntityManager.SpawnEntitySync(
+                    "point_script",
+                    new Dictionary<string, KeyValuesVariantValueItem>
+                    {
+                        ["script"] = script,
+                    });
+
+                _logger.LogInformation("script probe: point_script for '{s}' -> {r}",
+                                       script, e is null ? "null" : "spawned #" + e.Index);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("script probe: '{s}' threw: {msg}", script, ex.Message);
+            }
+        }
 
         return ECommandAction.Stopped;
     }

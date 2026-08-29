@@ -183,10 +183,22 @@ Recorded so they are not attempted again. Each was tested, not assumed.
 
 ## Compatibility
 
-This targets a fork of ModSharp that still carries the `custom_hud_layout` API. Upstream has since
-removed `ICustomHudLayout` and `ICustomHudManager` and replaced them with a script interop API
-(`IScriptManager`, `IScriptCallContext`) that bridges C# and Panorama's JavaScript engine. Porting
-the interface layer to that API is tracked as an issue; the server side logic is unaffected by it.
+The interface is built on ModSharp's `custom_hud_layout` support, which lives on the open pull
+request [Kxnrl/modsharp-public#123](https://github.com/Kxnrl/modsharp-public/pull/123) and is not
+in `master` yet. Build against `Sharp.Shared.dll` from that branch, or from its CI artifact, and
+run the matching runtime; the API and the native library have to come from the same revision.
+
+The branch is under active development and does rename things, so expect small breaks when you
+update. Moving from the 27 August snapshot to the 29 August head cost exactly three renames:
+`ICustomHudManager` to `IPanoramaManager`, `GetCustomHudManager` to `GetPanoramaManager`, and the
+class override enum `Present`/`Absent` to `ForceEnable`/`ForceDisable`.
+
+`master` also has a separate script interop API (`IScriptManager`) that bridges C# to CS2's
+`cs_script` V8 VM. It is **not** a replacement for this. cs_script runs from a `point_script`
+entity that ships inside the map, and a `point_script` spawned at runtime never executes: tested
+with three keyvalue names, both spawn orderings and three path forms, using Valve's own compiled
+`hello.vjs_c`. On a server that runs arbitrary workshop maps the script VM is unreachable, whereas
+a `custom_hud_layout` entity can be spawned at runtime on any map, which is how this works.
 
 ## Licence
 
