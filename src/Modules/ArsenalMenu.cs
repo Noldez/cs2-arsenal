@@ -279,8 +279,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     private float             _exposure;
     private readonly IBaseEntity?[] _cam = new IBaseEntity?[MaxSlots];
     private readonly Vector?[] _eye = new Vector?[MaxSlots];
-    private readonly IPlayerCache        _cache;
-    private readonly InventoryRepository _repository;
+    private readonly IArsenalStore       _store;
 
     private readonly bool[]   _spawnFailed = new bool[MaxSlots];
 
@@ -330,12 +329,10 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
     public ArsenalMenu(InterfaceBridge      bridge,
                        ISharedSystem        sharedSystem,
                        ISkinApplier         applier,
-                       IPlayerCache         cache,
-                       InventoryRepository  repository,
+                       IArsenalStore        store,
                        ILogger<ArsenalMenu> logger)
     {
-        _cache      = cache;
-        _repository = repository;
+        _store = store;
         _bridge    = bridge;
         _customHud = sharedSystem.GetCustomHudManager();
         _applier   = applier;
@@ -1549,8 +1546,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         {
             try
             {
-                await _repository.UpsertWeaponSkin(steamId, def, pick.Paint, 0.01f, 0, null);
-                await _repository.UpsertWeaponStickers(steamId, def, stickers);
+                await _store.SaveFinish(steamId, def, pick.Paint, 0.01f, 0, null);
+                await _store.SaveStickers(steamId, def, stickers);
 
                 // A knife needs the loadout slot as well as the skin row. The give hook swaps the
                 // default knife for whatever sits in the Knife slot, so a paint saved against a
@@ -1561,11 +1558,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
                 {
                     foreach (var team in (int[]) [2, 3])
                     {
-                        await _repository.UpsertLoadoutItem(steamId, team, "Knife", def);
+                        await _store.SaveLoadoutItem(steamId, team, "Knife", def);
                     }
                 }
 
-                _cache.RefreshBySteamId(steamId);
+                _store.Invalidate(steamId);
 
                 _logger.LogInformation(
                     "equip: {weapon} paint {paint}, {stickers} sticker(s) saved for {steam}{knife}",
@@ -2065,14 +2062,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener
         {
             try
             {
-                await _repository.UpsertWeaponSkin(steamId, def, paint, 0.01f, 0, null);
+                await _store.SaveFinish(steamId, def, paint, 0.01f, 0, null);
 
                 foreach (var team in (int[]) [2, 3])
                 {
-                    await _repository.UpsertLoadoutItem(steamId, team, "Gloves", def);
+                    await _store.SaveLoadoutItem(steamId, team, "Gloves", def);
                 }
 
-                _cache.RefreshBySteamId(steamId);
+                _store.Invalidate(steamId);
 
                 _logger.LogInformation("equip: {glove} paint {paint} saved for {steam}",
                                        _gloveNames[glove], paint, steamId);
