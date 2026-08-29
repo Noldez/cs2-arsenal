@@ -13,14 +13,14 @@ load time.
 
 <p align="center">
   <a href="docs/showcase.mp4">
-    <img src="docs/showcase.png" width="900"
-         alt="Knife mode: a Damascus Steel karambit standing in the room, the knife list on the left and the finish list on the right">
+    <img src="docs/preview.gif" width="900"
+         alt="The browser cycling through finishes, stickers, a knife, gloves and a music kit, each previewed as a real item in the room">
   </a>
 </p>
 
 <p align="center">
-  <a href="docs/showcase.mp4"><b>Watch the walkthrough</b></a> &nbsp;&middot;&nbsp; 80 seconds, no commentary
-  &nbsp;&middot;&nbsp; weapons and finishes, knives, gloves, the sticker editor, music kits
+  <a href="docs/showcase.mp4"><b>Full 80 second walkthrough</b></a> &nbsp;&middot;&nbsp; no commentary
+  &nbsp;&middot;&nbsp; weapons and finishes, knives, gloves, the sticker editor, pins, music kits
 </p>
 
 ## What it does
