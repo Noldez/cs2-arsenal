@@ -9,6 +9,7 @@ using Sharp.Shared.GameEntities;
 using Sharp.Shared.GameObjects;
 using Sharp.Shared.Listeners;
 using Sharp.Shared.Managers;
+using Sharp.Extensions.CommandManager;
 using Sharp.Shared.Objects;
 using Sharp.Shared.Types;
 using Sharp.Shared.Units;
@@ -281,6 +282,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     private readonly IBaseEntity?[] _cam = new IBaseEntity?[MaxSlots];
     private readonly Vector?[] _eye = new Vector?[MaxSlots];
     private readonly IArsenalStore       _store;
+    private readonly ICommandManager     _commands;
 
     private readonly bool[]   _spawnFailed = new bool[MaxSlots];
 
@@ -331,9 +333,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                        ISharedSystem        sharedSystem,
                        ISkinApplier         applier,
                        IArsenalStore        store,
+                       ICommandManager      commands,
                        ILogger<ArsenalMenu> logger)
     {
-        _store = store;
+        _store    = store;
+        _commands = commands;
         _bridge    = bridge;
         _customHud = sharedSystem.GetCustomHudManager();
         _applier   = applier;
@@ -376,6 +380,14 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                                                   "Toggle spawning the preview vs giving and dropping it");
         _bridge.ConVarManager.CreateServerCommand("armory_arsenal_knife", OnCommandProbe,
                                                   "Drop a bare knife at the preview spot");
+
+        // One call registers BOTH the chat trigger and a console command, so !skins and
+        // ms_skins are the same thing. Players could not open the browser at all before this;
+        // it was opened for them over rcon.
+        foreach (var name in new[] { "skins", "ws", "arsenal" })
+        {
+            _commands.RegisterClientCommand(name, OnClientOpen);
+        }
 
         _bridge.HookManager.PlayerCanAcquire.InstallHookPre(OnCanAcquirePre);
         _customHud.InstallClickListener(OnClicked);
@@ -2090,6 +2102,46 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         });
 
         Refresh(slot);
+    }
+
+    /// <summary>
+    ///     Open the browser for the player who asked for it.
+    ///     <br /><br />
+    ///     Alive only, because the whole thing needs a pawn: the camera is parented to one, the
+    ///     player is hidden and frozen through one, and the preview is placed relative to their
+    ///     eye. A spectator has none of that, so the browser would come up empty and the frame
+    ///     loop would spin on a pawn that is not there.
+    /// </summary>
+    private void OnClientOpen(IGameClient client, StringCommand command)
+    {
+        if (client.IsFakeClient)
+        {
+            return;
+        }
+
+        var slot = client.Slot;
+        var s    = slot.AsPrimitive();
+
+        if (_open[s])
+        {
+            Close(slot);
+
+            return;
+        }
+
+        if (client.GetPlayerController() is not { } controller || !controller.IsValid())
+        {
+            return;
+        }
+
+        if (Pawn(slot) is not { } pawn || !pawn.IsValid() || pawn.LifeState != LifeState.Alive)
+        {
+            client.Print(HudPrintChannel.Chat, " [ARSENAL] You have to be alive to open this.");
+
+            return;
+        }
+
+        Open(controller);
     }
 
     /// <summary>
