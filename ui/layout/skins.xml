@@ -852,6 +852,8 @@
 				<Button id="stkslot3" class="Chip"><Label class="ChipL" text="4" /></Button>
 				<Button id="stkslot4" class="Chip"><Label class="ChipL" text="5" /></Button>
 				<Panel class="VRule" hittest="false" />
+				<Button id="stkslot5" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="CHARM" /></Button>
+				<Panel class="VRule" hittest="false" />
 			<Panel class="Grp" hittest="false">
 				<Label class="Cap" text="X" />
 				<Button id="stk_x_l" class="Step"><Label class="StepL" text="&#8722;" /></Button>
@@ -867,18 +869,21 @@
 				<Label class="Unit" text="U" />
 			</Panel>
 			<Panel class="Grp" hittest="false">
-				<Label class="Cap" text="ROT" />
+				<Label class="Cap CapStk" text="ROT" />
+				<Label class="Cap CapChm" text="Z" />
 				<Button id="stk_r_l" class="Step"><Label class="StepL" text="&#8722;" /></Button>
 				<Label id="stk_r_v" class="Val" text="{s:v}" />
 				<Button id="stk_r_r" class="Step"><Label class="StepL" text="&#43;" /></Button>
-				<Label class="Unit" text="DEG" />
+				<Label class="Unit UnitStk" text="DEG" />
+				<Label class="Unit UnitChm" text="U" />
 			</Panel>
 			<Panel class="Grp" hittest="false">
-				<Label class="Cap" text="WEAR" />
+				<Label class="Cap CapStk" text="WEAR" />
+				<Label class="Cap CapChm" text="SEED" />
 				<Button id="stk_s_l" class="Step"><Label class="StepL" text="&#8722;" /></Button>
 				<Label id="stk_s_v" class="Val" text="{s:v}" />
 				<Button id="stk_s_r" class="Step"><Label class="StepL" text="&#43;" /></Button>
-				<Label class="Unit" text="FV" />
+				<Label class="Unit UnitStk" text="FV" />
 			</Panel>
 				<Panel class="VRule" hittest="false" />
 				<Button id="stk_clear" class="Tag"><Panel class="TagSkew" hittest="false" /><Label class="TagL" text="CLR" /></Button>

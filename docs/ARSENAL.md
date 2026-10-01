@@ -48,6 +48,11 @@ applies, because it is the same file being read:
 * Pins are filtered out of `GetEconItems()` by `DefaultLoadoutSlot: 55`, which is the only
   definition of equippable that both `Medals.cs` and `MusicKits.cs` accept. Parsing them out
   of `items_game.txt` instead yields 536, almost none of which can actually be equipped.
+* Charms (keychains) live in `keychain_definitions`, five blocks like the sticker kits, with
+  ids of their own: that id is what `keychain slot 0 id` takes. The capsule is not on the
+  charm; it comes from the `keychain_pack_kc_*` loot lists, one per rarity. The highlight
+  charms are `base` variants of one model and are listed once. Both the id and the seed are
+  `stored_as_integer`, so they are written as raw int bits, the way a sticker id is.
 
 ## Showing the weapon
 

@@ -25,6 +25,8 @@ load time.
 
 * Browse every weapon, knife and finish, previewed as a real weapon entity in front of the camera
 * Place up to five stickers per weapon with position, rotation and wear
+* Hang a charm off a weapon, as the sixth slot of the sticker editor, placed with X / Y / Z and a
+  pattern seed, previewed on the weapon itself
 * Browse gloves, pins and music kits as 2D icons, drawn from the game's own econ art
 * Preview a music kit through the server's sound system, scoped to the one player listening
 * Equip a selection so it applies to the player's actual loadout
@@ -199,6 +201,12 @@ is the same file being read:
 * Pins come from `GetEconItems()` filtered by `DefaultLoadoutSlot: 55`, the only definition of
   equippable that both `Medals.cs` and `MusicKits.cs` accept. Parsing them out of `items_game.txt`
   instead yields 536, almost none of which can be equipped.
+* Charms live in `keychain_definitions`, split over five blocks like the sticker kits, with ids of
+  their own that are what `keychain slot 0 id` takes. Nothing on a charm names its capsule: that
+  comes from the `keychain_pack_kc_*` loot lists, one per rarity, which list the charms they hold.
+  The tournament highlight charms are sixty-odd `base` variants of one model that differ only in
+  their reel, so the base is listed once. Knives take no charm, the same as stickers. The id and
+  the seed are `stored_as_integer`, so both cross as raw int bits like a sticker id does.
 
 ## Icons without artwork
 
@@ -305,6 +313,8 @@ The interface is built on ModSharp's `custom_hud_layout` support, which is **in 
 29 August 2026**. It was merged from what used to be an open pull request, so a fork is no longer
 needed: build against `Sharp.Shared.dll` from master and run the matching runtime. The API and the
 native library still have to come from the same revision.
+
+Last built and tested against the ModSharp master build of 2026-09-29 (git172) with `ModSharp.Sharp.Extensions.CommandManager` 2.1.170. Gamedata ages fast: the CS2 update of 2026-09-30 broke every signature in a build from late August, so keep the runtime current.
 
 `master` provides `IPanoramaManager` (via `GetPanoramaManager`), `ICustomHudLayout`, and the class
 override enum `ForceEnable`/`ForceDisable`. If you are coming from a pre-merge snapshot of the

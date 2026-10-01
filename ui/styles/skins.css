@@ -156,6 +156,16 @@
    The server genuinely sets this class (ArsenalMenu.cs:709) and nothing has
    ever used it. */
 .Root.Stickers .Spine { opacity: 0.38; }
+
+/* The charm slot of the sticker editor. The server flips .Charm on the root and the third
+   and fourth nudge captions swap from ROT / WEAR to Z / SEED. Both captions are in the
+   markup; this picks one, so no dialog variable has to be kept fed. */
+.CapChm  { visibility: collapse; }
+.UnitChm { visibility: collapse; }
+.Root.Charm .CapChm  { visibility: visible; }
+.Root.Charm .UnitChm { visibility: visible; }
+.Root.Charm .CapStk  { visibility: collapse; }
+.Root.Charm .UnitStk { visibility: collapse; }
 .Root.Stickers .DockRule
 {
 	background-color: gradient( linear, 0% 0%, 100% 0%,
@@ -965,6 +975,10 @@
 }
 .Tag:hover .TagL { color: #e8eef4; }
 
+/* A slot tag with something in it (the charm), the way a loaded chip reads. Before .On
+   on purpose: the two have equal weight, so the lit cell must win on source order. */
+.Tag.Has .TagL { color: #aebdcc; }
+
 /* The lit cell. One device: the seam turns accent and the well fills. */
 .Tag.On .TagSkew
 {
@@ -972,6 +986,7 @@
 	border-color: #4ade80;
 }
 .Tag.On .TagL { color: #a7f3c4; }
+.Tag.On.Has .TagL { color: #d8ffe8; }
 
 /* The border is already full #4ade80, so alpha cannot help it: skewx resamples
    the two RAKED edges across a sheared footprint and each pixel column of them
@@ -1024,6 +1039,7 @@
 .DockRow .TagL { font-size: 11px; letter-spacing: 4px; }
 #btn_mode      { width: 108px; margin-right: 4px; }
 #stk_clear     { width:  60px; }
+#stkslot5      { width:  78px; }   /* CHARM: five glyphs, same measure as RESET */
 #view_reset    { width:  78px; margin-left: 12px; }
 
 

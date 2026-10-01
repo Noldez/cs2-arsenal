@@ -26,6 +26,9 @@ internal interface IArsenalStore
     /// <summary>Replaces the sticker craft on one item. Null clears it.</summary>
     Task SaveStickers(ulong steamId, int itemDef, string? stickersJson);
 
+    /// <summary>Replaces the charm hanging off one item. Null clears it.</summary>
+    Task SaveKeychain(ulong steamId, int itemDef, string? keychainJson);
+
     /// <summary>
     ///     Puts an item in a loadout slot for one team. Knives and gloves need this AS WELL AS a
     ///     finish, because the spawn hook reads the loadout slot to decide which item to hand out
@@ -61,6 +64,9 @@ internal sealed class SqlArsenalStore : IArsenalStore, IArmoryService
 
     public Task SaveStickers(ulong steamId, int itemDef, string? stickersJson)
         => _repository.UpsertWeaponStickers(steamId, itemDef, stickersJson);
+
+    public Task SaveKeychain(ulong steamId, int itemDef, string? keychainJson)
+        => _repository.UpsertWeaponKeychain(steamId, itemDef, keychainJson);
 
     public Task SaveLoadoutItem(ulong steamId, int team, string slot, int itemDef)
         => _repository.UpsertLoadoutItem(steamId, team, slot, itemDef);

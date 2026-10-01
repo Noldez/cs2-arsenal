@@ -41,15 +41,25 @@ def rows(prefix):
     return "\n".join(out)
 
 
-def nudge(gid, cap, unit=""):
-    unit_el = ('\n\t\t\t\t<Label class="Unit" text="%s" />' % unit) if unit else ""
+def nudge(gid, cap, unit="", charm=None):
+    """One nudge pair. `charm` = (caption, unit) shown instead while the CHARM slot is
+    selected: both captions sit in the markup and the root's .Charm class, flipped by the
+    server, decides which is visible. Static text, so no dialog variable to keep fed."""
+    if charm:
+        cap_el = ('\t\t\t\t<Label class="Cap CapStk" text="%s" />\n'
+                  '\t\t\t\t<Label class="Cap CapChm" text="%s" />\n' % (cap, charm[0]))
+        unit_el = ('\n\t\t\t\t<Label class="Unit UnitStk" text="%s" />' % unit) if unit else ""
+        unit_el += ('\n\t\t\t\t<Label class="Unit UnitChm" text="%s" />' % charm[1]) if charm[1] else ""
+    else:
+        cap_el = '\t\t\t\t<Label class="Cap" text="%s" />\n' % cap
+        unit_el = ('\n\t\t\t\t<Label class="Unit" text="%s" />' % unit) if unit else ""
     return (
         '\t\t\t<Panel class="Grp" hittest="false">\n'
-        '\t\t\t\t<Label class="Cap" text="{cap}" />\n'
+        '{c}'
         '\t\t\t\t<Button id="{g}_l" class="Step"><Label class="StepL" text="&#8722;" /></Button>\n'
         '\t\t\t\t<Label id="{g}_v" class="Val" text="{{s:v}}" />\n'
         '\t\t\t\t<Button id="{g}_r" class="Step"><Label class="StepL" text="&#43;" /></Button>{u}\n'
-        '\t\t\t</Panel>'.format(cap=cap, g=gid, u=unit_el))
+        '\t\t\t</Panel>'.format(c=cap_el, g=gid, u=unit_el))
 
 
 def column(side, secid, listid, prefix, pager):
@@ -206,12 +216,20 @@ if __name__ == "__main__":
     columns = (column("ColL", "sec_l", "list_l", "wp", pager=False) + "\n\n"
                + column("ColR", "sec_r", "list_r", "fn", pager=True))
 
+    # Five sticker chips, then the charm. CS2 hangs ONE charm off a weapon beside its five
+    # stickers, so it is the sixth slot of the same editor rather than a tab of its own. A Tag,
+    # not a Chip: a chip is cut for one digit, and "C" would say nothing.
     slots = "\n".join(
         '\t\t\t\t<Button id="stkslot%d" class="Chip"><Label class="ChipL" text="%d" /></Button>' % (i, i + 1)
         for i in range(5))
+    slots += ('\n\t\t\t\t<Panel class="VRule" hittest="false" />\n'
+              '\t\t\t\t<Button id="stkslot5" class="Tag"><Panel class="TagSkew" hittest="false" />'
+              '<Label class="TagL" text="CHARM" /></Button>')
 
+    # With the charm selected the third and fourth nudges become depth and the pattern seed.
     fields = "\n".join([nudge("stk_x", "X", "U"), nudge("stk_y", "Y", "U"),
-                        nudge("stk_r", "ROT", "DEG"), nudge("stk_s", "WEAR", "FV")])
+                        nudge("stk_r", "ROT", "DEG", charm=("Z", "U")),
+                        nudge("stk_s", "WEAR", "FV", charm=("SEED", ""))])
 
     view = "\n".join([nudge("rot", "TURN", "DEG"), nudge("zoom", "ZOOM"),
                       nudge("panx", "MOVE X"), nudge("pany", "MOVE Y")])
@@ -221,7 +239,10 @@ if __name__ == "__main__":
                  .replace("FIELDS", fields)
                  .replace("VIEW", view))
 
+    # ArmoryUI keeps the layout under panorama/, the public repository under ui/.
     dest = os.path.join(here, "..", "panorama", "layout", "custom_game", "skins.xml")
+    if not os.path.isdir(os.path.dirname(dest)):
+        dest = os.path.join(here, "..", "ui", "layout", "skins.xml")
     dest = os.path.abspath(dest)
     with io.open(dest, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(xml)

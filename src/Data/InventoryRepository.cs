@@ -139,6 +139,16 @@ internal class InventoryRepository
             """,
             new { steamId, itemDef, stickersJson });
 
+    /// <summary>Replaces the charm on one weapon. Same contract as the stickers: null clears it.</summary>
+    public Task UpsertWeaponKeychain(ulong steamId, int itemDef, string? keychainJson)
+        => Db.Ado.ExecuteCommandAsync(
+            """
+            INSERT INTO weapon_skins (steam_id, item_def, keychain)
+            VALUES (@steamId, @itemDef, @keychainJson)
+            ON DUPLICATE KEY UPDATE keychain = VALUES(keychain)
+            """,
+            new { steamId, itemDef, keychainJson });
+
     public Task UpdateStatTrak(ulong steamId, int itemDef, int statTrak)
         => Db.Ado.ExecuteCommandAsync(
             "UPDATE weapon_skins SET stattrak = @statTrak WHERE steam_id = @steamId AND item_def = @itemDef",

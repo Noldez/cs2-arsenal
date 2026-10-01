@@ -143,6 +143,31 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         public float Wear;
     }
 
+    /// <summary>
+    ///     The charm hanging off the weapon. CS2 hangs ONE charm beside the five stickers, so it
+    ///     is the sixth slot of the sticker editor and sits next to <see cref="Applied" />. X, Y
+    ///     and Z are the keychain offsets in the weapon's own units; the seed picks the pattern
+    ///     on the few charms that have one.
+    /// </summary>
+    private struct Charm
+    {
+        public int   Id;
+        public float X;
+        public float Y;
+        public float Z;
+        public int   Seed;
+    }
+
+    /// <summary>The sixth chip of the sticker row, `stkslot5`: the charm.</summary>
+    private const int CharmSlot = StickerSlots;
+
+    private readonly Charm[] _charm  = new Charm[MaxSlots];
+    private readonly int[]   _chsel  = new int[MaxSlots];   // charm collection
+    private readonly int[]   _chisel = new int[MaxSlots];   // charm within it
+
+    private readonly List<string>                 _charmGroups = new();
+    private readonly Dictionary<string, Finish[]> _charms      = new(StringComparer.Ordinal);
+
     private readonly float[] _yaw   = new float[MaxSlots];
     private readonly float[] _zoom  = new float[MaxSlots];
     private readonly float[] _panH  = new float[MaxSlots];   // across the view
@@ -679,6 +704,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         _logger.LogInformation("Stickers: {collections} collections, {count} stickers",
                                _collections.Count, _stickers.Values.Sum(v => v.Length));
 
+        foreach (var g in cat.Keychains.GroupBy(k => k.Collection)
+                             .OrderBy(g => g.Key, StringComparer.Ordinal))
+        {
+            _charmGroups.Add(g.Key);
+            _charms[g.Key] = g.Select(k => new Finish(k.Id, k.Name, k.Rarity)).ToArray();
+        }
+
+        _logger.LogInformation("Charms: {collections} collections, {count} charms",
+                               _charmGroups.Count, _charms.Values.Sum(v => v.Length));
+
         foreach (var (idx, name) in cat.ItemNames)
         {
             _econNames[idx] = new EconEntry(name, cat.ItemImages.GetValueOrDefault(idx, ""));
@@ -707,6 +742,15 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         => _collections.Count > 0 && _stickers.TryGetValue(_collections[_csel[slot]], out var k)
             ? k
             : Array.Empty<Finish>();
+
+    private Finish[] CharmsFor(int slot)
+        => _charmGroups.Count > 0 && _charms.TryGetValue(_charmGroups[_chsel[slot]], out var k)
+            ? k
+            : Array.Empty<Finish>();
+
+    /// <summary>In the sticker editor with the charm slot selected.</summary>
+    private bool CharmMode(int s)
+        => _mode[s] == Browse.Stickers && _stkSlot[s] == CharmSlot;
 
     /// <summary>Right-hand meta column: what the row is, in one token.</summary>
     private static string Calibre(string weapon)
@@ -773,6 +817,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var s = slot.AsPrimitive();
 
         Cls(slot, "root", "Stickers", (_mode[s] == Browse.Stickers));
+        Cls(slot, "root", "Charm", CharmMode(s));   // swaps the nudge captions client-side
         Cls(slot, "stk_row", "Hide", _mode[s] != Browse.Stickers);
         Cls(slot, "btn_mode", "On", (_mode[s] == Browse.Stickers));
         Txt(slot, "rot_v", ((int) _yaw[s]).ToString());
@@ -961,6 +1006,22 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
     private void RefreshStickers(PlayerSlot slot, int s)
     {
+        for (var i = 0; i < StickerSlots; i++)
+        {
+            Cls(slot, "stkslot" + i, "On", i == _stkSlot[s]);
+            Cls(slot, "stkslot" + i, "Has", _applied[s, i].Id > 0);
+        }
+
+        Cls(slot, "stkslot" + CharmSlot, "On", _stkSlot[s] == CharmSlot);
+        Cls(slot, "stkslot" + CharmSlot, "Has", _charm[s].Id > 0);
+
+        if (_stkSlot[s] == CharmSlot)
+        {
+            RefreshCharm(slot, s);
+
+            return;
+        }
+
         Txt(slot, "title", "STICKER");
         Txt(slot, "sec_l", "01  COLLECTION");
         Txt(slot, "sec_r", "02  STICKER");
@@ -988,12 +1049,6 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         Txt(slot, "idx", Two(_stkSlot[s] + 1));
 
-        for (var i = 0; i < StickerSlots; i++)
-        {
-            Cls(slot, "stkslot" + i, "On", i == _stkSlot[s]);
-            Cls(slot, "stkslot" + i, "Has", _applied[s, i].Id > 0);
-        }
-
         Txt(slot, "stk_x_v", applied.X.ToString("0.00"));
         Txt(slot, "stk_y_v", applied.Y.ToString("0.00"));
         Txt(slot, "stk_r_v", ((int) applied.Rotation).ToString());
@@ -1002,6 +1057,45 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         if (list.Length > 0 && _ksel[s] < list.Length)
         {
             Readout(slot, list[_ksel[s]].Name, list[_ksel[s]].Rarity);
+        }
+    }
+
+    /// <summary>
+    ///     The sixth slot. Same two columns - collections on the left, charms on the right - and
+    ///     the four nudges become X / Y / Z and the pattern seed. No pager: the biggest capsule
+    ///     holds 23, so every collection fits the declared rows and scrolls.
+    /// </summary>
+    private void RefreshCharm(PlayerSlot slot, int s)
+    {
+        Txt(slot, "title", "CHARM");
+        Txt(slot, "sec_l", "01  COLLECTION");
+        Txt(slot, "sec_r", "02  CHARM");
+        Txt(slot, "sec_l_c", _charmGroups.Count.ToString());
+
+        Rows_(slot, "wp", _charmGroups.Count, 0, _chsel[s],
+              i => _charmGroups[i].ToUpperInvariant(),
+              i => _charms[_charmGroups[i]].Length.ToString(),
+              _ => -1);
+
+        var list = CharmsFor(s);
+        Txt(slot, "sec_r_c", list.Length.ToString());
+
+        Rows_(slot, "fn", list.Length, 0, _chisel[s],
+              i => list[i].Name, i => Grade(list[i].Rarity), i => list[i].Rarity);
+
+        Cls(slot, "fn_pager", "Hide", true);
+        Txt(slot, "idx", Two(CharmSlot + 1));
+
+        var charm = _charm[s];
+
+        Txt(slot, "stk_x_v", charm.X.ToString("0.0"));
+        Txt(slot, "stk_y_v", charm.Y.ToString("0.0"));
+        Txt(slot, "stk_r_v", charm.Z.ToString("0.0"));
+        Txt(slot, "stk_s_v", charm.Seed.ToString());
+
+        if (list.Length > 0 && _chisel[s] < list.Length)
+        {
+            Readout(slot, list[_chisel[s]].Name, list[_chisel[s]].Rarity);
         }
     }
 
@@ -1268,7 +1362,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         return new(EHookAction.SkipCallReturnOverride, EAcquireResult.NotAllowedByProhibition);
     }
 
-    /// <summary>Everything about the stickers that would change what the weapon looks like.</summary>
+    /// <summary>Everything about the stickers and the charm that would change what the weapon looks like.</summary>
     private string StickerKey(int s)
     {
         var key = new System.Text.StringBuilder();
@@ -1279,6 +1373,11 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             key.Append(a.Id).Append(',').Append(a.X).Append(',').Append(a.Y)
                .Append(',').Append(a.Rotation).Append(',').Append(a.Wear).Append(';');
         }
+
+        // the charm is part of the look too, or nudging it would never rebuild the preview
+        var c = _charm[s];
+        key.Append("charm:").Append(c.Id).Append(',').Append(c.X).Append(',').Append(c.Y)
+           .Append(',').Append(c.Z).Append(',').Append(c.Seed);
 
         return key.ToString();
     }
@@ -1700,6 +1799,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         var pick     = list[_fsel[s]];
         var isKnife  = IsKnife(wanted);
         var stickers = StickerJson(s);
+        var charm    = isKnife ? null : CharmJson(s);   // knives take neither
 
         Equipped(slot, pick.Name);
 
@@ -1717,6 +1817,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             {
                 await _store.SaveFinish(steamId, def, pick.Paint, 0.01f, 0, null);
                 await _store.SaveStickers(steamId, def, stickers);
+                await _store.SaveKeychain(steamId, def, charm);
 
                 // A knife needs the loadout slot as well as the skin row. The give hook swaps the
                 // default knife for whatever sits in the Knife slot, so a paint saved against a
@@ -1734,8 +1835,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 _store.Invalidate(steamId);
 
                 _logger.LogInformation(
-                    "equip: {weapon} paint {paint}, {stickers} sticker(s) saved for {steam}{knife}",
-                    wanted, pick.Paint, StickerCount(s), steamId,
+                    "equip: {weapon} paint {paint}, {stickers} sticker(s){charm} saved for {steam}{knife}",
+                    wanted, pick.Paint, StickerCount(s),
+                    charm is null ? "" : ", charm " + _charm[s].Id, steamId,
                     isKnife ? " (+ knife loadout, both teams)" : "");
             }
             catch (Exception ex)
@@ -1795,6 +1897,16 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         }
 
         return list.Count == 0 ? null : JsonSerializer.Serialize(list);
+    }
+
+    /// <summary>The charm as the JSON the weapon_skins row carries, or null for none.</summary>
+    private string? CharmJson(int s)
+    {
+        var c = _charm[s];
+
+        return c.Id <= 0
+            ? null
+            : JsonSerializer.Serialize(new KeychainInfo { Id = c.Id, X = c.X, Y = c.Y, Z = c.Z, Seed = c.Seed });
     }
 
     /// <summary>
@@ -2255,6 +2367,10 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
         _open[s]        = false;
         _mode[s] = Browse.Weapons;
+        _stkSlot[s]     = 0;
+        _charm[s]       = default;
+        _chsel[s]       = 0;
+        _chisel[s]      = 0;
         _spawnFailed[s] = false;
         _spawned[s]     = "";
         _dressedPawn[s] = default;
@@ -2548,7 +2664,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             Browse.Weapons  => GunList().Count,
             Browse.Knives   => KnifeList().Count,
             Browse.Gloves   => _gloves.Count,
-            Browse.Stickers => _collections.Count,
+            Browse.Stickers => _stkSlot[s] == CharmSlot ? _charmGroups.Count : _collections.Count,
             Browse.Pins     => _pinGroups.Count,
             Browse.Music    => _musicGroups.Count,
             _               => 0,
@@ -2560,7 +2676,9 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         {
             Browse.Weapons or Browse.Knives => FinishesFor(s).Length,
             Browse.Gloves                   => GloveSkinsFor(s).Length,
-            Browse.Stickers                 => StickersFor(s).Length,
+            Browse.Stickers                 => _stkSlot[s] == CharmSlot
+                                                   ? CharmsFor(s).Length
+                                                   : StickersFor(s).Length,
             Browse.Pins                     => PinsFor(s).Count,
             Browse.Music                    => MusicFor(s).Count,
             _                               => 0,
@@ -2690,7 +2808,7 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
     }
 
     /// <summary>
-    ///     Write the five sticker slots onto the item view.
+    ///     Write the five sticker slots and the charm onto the item view.
     ///     <br /><br />
     ///     Like the paint, these only take effect on an item that has not networked yet, so any
     ///     sticker edit rebuilds the preview through the give/drop path rather than poking the
@@ -2718,6 +2836,19 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
             _applier.SetAttribute(view, schema.Rotation, applied.Rotation);
             _applier.SetAttribute(view, schema.OffsetX, applied.X);
             _applier.SetAttribute(view, schema.OffsetY, applied.Y);
+        }
+
+        if (_charm[s].Id > 0)
+        {
+            var charm  = _charm[s];
+            var schema = StickerSchemas.GetKeychain(0);
+
+            // id and seed are stored_as_integer, so they cross as raw int bits like a sticker id
+            _applier.SetAttribute(view, schema.Id, BitConverter.Int32BitsToSingle(charm.Id));
+            _applier.SetAttribute(view, schema.Seed, BitConverter.Int32BitsToSingle(charm.Seed));
+            _applier.SetAttribute(view, schema.OffsetX, charm.X);
+            _applier.SetAttribute(view, schema.OffsetY, charm.Y);
+            _applier.SetAttribute(view, schema.OffsetZ, charm.Z);
         }
     }
 
@@ -3517,7 +3648,12 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 }
 
                 // the right-hand list belongs to the left-hand pick, so it resets with it
-                if (_mode[s] == Browse.Stickers)
+                if (CharmMode(s))
+                {
+                    _chsel[s]  = idx;
+                    _chisel[s] = 0;
+                }
+                else if (_mode[s] == Browse.Stickers)
                 {
                     _csel[s]  = idx;
                     _ksel[s]  = 0;
@@ -3542,14 +3678,21 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
             if (buttonId == "fn" + i)
             {
-                var idx = ((_mode[s] == Browse.Stickers) ? _kpage[s] : _fpage[s]) * Rows + i;
+                // the charm list never pages, so its index is the row itself
+                var idx = (CharmMode(s) ? 0 : (_mode[s] == Browse.Stickers) ? _kpage[s] : _fpage[s])
+                          * Rows + i;
 
                 if (idx >= rightCount)
                 {
                     return;
                 }
 
-                if ((_mode[s] == Browse.Stickers))
+                if (CharmMode(s))
+                {
+                    _chisel[s]   = idx;
+                    _charm[s].Id = CharmsFor(s)[idx].Paint;
+                }
+                else if ((_mode[s] == Browse.Stickers))
                 {
                     _ksel[s] = idx;
                     _applied[s, _stkSlot[s]].Id = StickersFor(s)[idx].Paint;
@@ -3603,9 +3746,8 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
         const float Turn  = 5f;
         const float Grow  = 0.10f;
 
-        ref var applied = ref _applied[s, _stkSlot[s]];
-
-        for (var i = 0; i < StickerSlots; i++)
+        // the five chips and the charm
+        for (var i = 0; i <= StickerSlots; i++)
         {
             if (buttonId == "stkslot" + i)
             {
@@ -3615,6 +3757,13 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
                 return true;
             }
         }
+
+        if (_stkSlot[s] == CharmSlot)
+        {
+            return CharmClick(slot, s, buttonId);
+        }
+
+        ref var applied = ref _applied[s, _stkSlot[s]];
 
         switch (buttonId)
         {
@@ -3633,6 +3782,43 @@ internal sealed class ArsenalMenu : IArmoryService, IGameListener, IClientListen
 
             case "stk_clear":
                 applied = new Applied();
+
+                break;
+
+            default:
+                return false;
+        }
+
+        Refresh(slot);
+
+        return true;
+    }
+
+    /// <summary>
+    ///     The charm's own nudges, on the same four controls. The offsets are in the weapon's
+    ///     units, so the step is far coarser than a sticker's; the seed only matters on the few
+    ///     charms with a pattern and steps by one, because that is how their faces are numbered.
+    /// </summary>
+    private bool CharmClick(PlayerSlot slot, int s, string buttonId)
+    {
+        const float Step  = 0.5f;
+        const float Reach = 25f;
+
+        ref var charm = ref _charm[s];
+
+        switch (buttonId)
+        {
+            case "stk_x_l": charm.X    = Clamp(charm.X - Step, -Reach, Reach); break;
+            case "stk_x_r": charm.X    = Clamp(charm.X + Step, -Reach, Reach); break;
+            case "stk_y_l": charm.Y    = Clamp(charm.Y - Step, -Reach, Reach); break;
+            case "stk_y_r": charm.Y    = Clamp(charm.Y + Step, -Reach, Reach); break;
+            case "stk_r_l": charm.Z    = Clamp(charm.Z - Step, -Reach, Reach); break;
+            case "stk_r_r": charm.Z    = Clamp(charm.Z + Step, -Reach, Reach); break;
+            case "stk_s_l": charm.Seed = Math.Max(0, charm.Seed - 1);          break;
+            case "stk_s_r": charm.Seed = Math.Min(100000, charm.Seed + 1);     break;
+
+            case "stk_clear":
+                charm = new Charm();
 
                 break;
 

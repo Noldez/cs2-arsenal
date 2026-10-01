@@ -12,13 +12,17 @@ internal sealed record CatGlove(int Def, string Name, IReadOnlyList<CatFinish> F
 /// <summary>A music kit. Its id is a music_definitions id, NOT an item definition index.</summary>
 internal sealed record CatMusic(int Id, string Name, string SchemaName, string Image);
 
+/// <summary>A charm. Its id is a keychain_definitions id, NOT an item definition index.</summary>
+internal sealed record CatKeychain(int Id, string Name, string Collection, int Rarity, string SchemaName);
+
 internal sealed record Catalogues(
     IReadOnlyDictionary<string, IReadOnlyList<CatFinish>> Weapons,
     IReadOnlyDictionary<string, CatGlove>                 Gloves,
     IReadOnlyList<CatMusic>                               Music,
     IReadOnlyDictionary<int, string>                      ItemNames,
     IReadOnlyDictionary<int, string>                      ItemImages,
-    IReadOnlyDictionary<string, IReadOnlyList<CatFinish>> Stickers);
+    IReadOnlyDictionary<string, IReadOnlyList<CatFinish>> Stickers,
+    IReadOnlyList<CatKeychain>                            Keychains);
 
 internal interface ISchemaCatalogue
 {
@@ -114,7 +118,8 @@ internal sealed partial class SchemaCatalogue : ISchemaCatalogue, IArmoryService
                                   Array.Empty<CatMusic>(),
                                   new Dictionary<int, string>(),
                                   new Dictionary<int, string>(),
-                                  new Dictionary<string, IReadOnlyList<CatFinish>>());
+                                  new Dictionary<string, IReadOnlyList<CatFinish>>(),
+                                  Array.Empty<CatKeychain>());
         }
 
         var loc    = Localisation(eng);
@@ -127,15 +132,17 @@ internal sealed partial class SchemaCatalogue : ISchemaCatalogue, IArmoryService
         var music         = Music(items, loc);
         var (names, imgs) = Items(items, loc);
         var stickers      = Stickers(items, loc);
+        var keychains     = Keychains(items, loc);
 
         _logger.LogInformation(
             "schema: {w} weapons / {f} finishes, {g} gloves / {gf} finishes, {m} music kits, "
-            + "{i} items, {sc} sticker collections / {s} stickers",
+            + "{i} items, {sc} sticker collections / {s} stickers, {k} charms / {kc} collections",
             weapons.Count, weapons.Values.Sum(v => v.Count),
             gloves.Count, gloves.Values.Sum(v => v.Finishes.Count), music.Count, names.Count,
-            stickers.Count, stickers.Values.Sum(v => v.Count));
+            stickers.Count, stickers.Values.Sum(v => v.Count),
+            keychains.Count, keychains.Select(k => k.Collection).Distinct().Count());
 
-        return new Catalogues(weapons, gloves, music, names, imgs, stickers);
+        return new Catalogues(weapons, gloves, music, names, imgs, stickers, keychains);
     }
 
     /// <summary>
@@ -472,6 +479,63 @@ internal sealed partial class SchemaCatalogue : ISchemaCatalogue, IArmoryService
                                          StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    ///     Charms, grouped by the capsule they drop from.
+    ///     <br /><br />
+    ///     keychain_definitions is split over FIVE blocks, like the sticker kits. A charm's id is
+    ///     its own keyspace - it is what `keychain slot 0 id` takes - not an item definition
+    ///     index. The capsule is not written on the charm: it comes from the keychain_pack_kc_*
+    ///     loot lists, one per rarity, which name the charms they hold. The tournament highlight
+    ///     charms are sixty-odd variants of one model, each a `base` entry carrying nothing but
+    ///     its own reel, so the base is listed once and the variants are skipped. The sticker
+    ///     slab is skipped too: it shows nothing without a sticker sealed in it.
+    /// </summary>
+    private static List<CatKeychain> Keychains(string items, Dictionary<string, string> loc)
+    {
+        // kc_missinglink_ava -> "Missing Link Charm Collection", through the loot lists
+        var capsule = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (Match list in KeychainLootList().Matches(items))
+        {
+            var series = KeychainGrade().Replace(list.Groups[1].Value, "");
+            var title  = loc.GetValueOrDefault("CSGO_crate_" + series + "_capsule",
+                                               series.Replace("keychain_pack_", "").Replace('_', ' '));
+
+            foreach (Match kc in KeychainRef().Matches(list.Groups[2].Value))
+            {
+                capsule.TryAdd(kc.Groups[1].Value, title);
+            }
+        }
+
+        var result = new List<CatKeychain>();
+
+        foreach (Match block in NamedBlock("keychain_definitions").Matches(items))
+        {
+            foreach (Match e in Entry().Matches(block.Groups[1].Value))
+            {
+                var body = e.Groups[2].Value;
+                var name = Field(body, "name");
+
+                if (name.Length == 0
+                    || Field(body, "base").Length > 0
+                    || name == "kc_sticker_display_case"
+                    || !int.TryParse(e.Groups[1].Value, out var id))
+                {
+                    continue;
+                }
+
+                var tag   = Field(body, "loc_name").TrimStart('#');
+                var grade = RarityMap.GetValueOrDefault(Field(body, "item_rarity"), "milspec");
+
+                result.Add(new CatKeychain(id, loc.GetValueOrDefault(tag, name),
+                                           capsule.GetValueOrDefault(name, "Highlights"),
+                                           Array.IndexOf(Rarities, grade), name));
+            }
+        }
+
+        return result.OrderBy(k => k.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     private static string Field(string body, string key)
     {
         var m = Regex.Match(body, "\"" + key + "\"\\s*\"([^\"]*)\"");
@@ -493,4 +557,16 @@ internal sealed partial class SchemaCatalogue : ISchemaCatalogue, IArmoryService
 
     [GeneratedRegex("_(?:gamma_)?doppler_phase(\\d)|_(ruby|sapphire|emerald|blackpearl)_")]
     private static partial Regex VariantRe();
+
+    /// <summary>One charm capsule loot list: keychain_pack_kc_missinglink_rare and its kin.</summary>
+    [GeneratedRegex("\\n\\t\\t\"(keychain_pack_kc_[a-z0-9_]+)\"\\s*\\n\\t\\t\\{(.*?)\\n\\t\\t\\}", RegexOptions.Singleline)]
+    private static partial Regex KeychainLootList();
+
+    /// <summary>A charm named inside a loot list: "[kc_missinglink_ava]keychain".</summary>
+    [GeneratedRegex("\"\\[(kc_[a-z0-9_]+)\\]keychain\"")]
+    private static partial Regex KeychainRef();
+
+    /// <summary>The rarity suffix on a capsule loot list name, so one capsule's four lists fold.</summary>
+    [GeneratedRegex("_(?:common|rare|mythical|legendary|ancient)$")]
+    private static partial Regex KeychainGrade();
 }

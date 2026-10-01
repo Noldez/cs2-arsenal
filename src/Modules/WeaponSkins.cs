@@ -174,7 +174,9 @@ internal class WeaponSkins : IArmoryService
         {
             var schema = StickerSchemas.GetKeychain(0);
             _applier.SetAttribute(view, schema.Id, BitConverter.Int32BitsToSingle(keychain.Id));
-            _applier.SetAttribute(view, schema.Seed, keychain.Seed);
+
+            // stored_as_integer, like the id: the seed crosses as raw int bits, not as a float.
+            _applier.SetAttribute(view, schema.Seed, BitConverter.Int32BitsToSingle((int) keychain.Seed));
             _applier.SetAttribute(view, schema.OffsetX, keychain.X);
             _applier.SetAttribute(view, schema.OffsetY, keychain.Y);
             _applier.SetAttribute(view, schema.OffsetZ, keychain.Z);
